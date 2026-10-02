@@ -6,10 +6,19 @@ const TICK_VISIBLE_MS = 1200;
 const LONG_PRESS_MS = 500;
 
 /**
+ * Set to a positive number of milliseconds to make received messages fade
+ * after that long. Default off (spec section 8).
+ */
+export const MESSAGE_VISIBLE_MS = 0;
+
+/**
  * One-sided chat UI (spec section 8): the list shows only received
  * messages, all identical in style — no names, no timestamps, no own
  * bubbles. The input clears immediately on send; after an ack a small
  * "delivered" tick appears and fades after ~1.2s.
+ *
+ * Privacy: when the tab loses focus or is hidden the list is blurred
+ * behind a "Tap to reveal" overlay (a deterrent, not a guarantee).
  *
  * Reply (spec step 7): click or long-press a received message to reveal
  * Reply; the composer shows a quote chip with a cancel button. Outgoing
@@ -21,6 +30,8 @@ export function Chat({ room }: { room: RoomApi }) {
   const [tickVisible, setTickVisible] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<ReceivedMessage | null>(null);
+  const [obscured, setObscured] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickRef = useRef(false);
@@ -42,6 +53,32 @@ export function Chat({ room }: { room: RoomApi }) {
     const timer = setTimeout(() => setTickVisible(false), TICK_VISIBLE_MS);
     return () => clearTimeout(timer);
   }, [room.delivered]);
+
+  // Blur the list behind "Tap to reveal" while the tab is hidden or unfocused.
+  useEffect(() => {
+    const onVisibility = (): void => {
+      setObscured(document.hidden || !document.hasFocus());
+    };
+    const onBlur = (): void => setObscured(true);
+    const onFocus = (): void => setObscured(false);
+    // Initial state: only trust document.hidden (focus is event-driven).
+    setObscured(document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (obscured) {
+      // Any transition to hidden re-arms the overlay.
+      setRevealed(false);
+    }
+  }, [obscured]);
 
   useEffect(() => {
     return () => {
@@ -93,34 +130,39 @@ export function Chat({ room }: { room: RoomApi }) {
     }
   }
 
+  const hideContent = obscured && !revealed;
+
   return (
     <>
-      <div className="messages" ref={listRef} data-testid="messages">
-        {room.messages.map((message) => (
-          <div
-            className="message"
-            key={message.id}
-            onClick={() => onMessageClick(message.id)}
-            onPointerDown={() => beginLongPress(message.id)}
-            onPointerUp={cancelLongPress}
-            onPointerLeave={cancelLongPress}
-            onPointerCancel={cancelLongPress}
-            onContextMenu={(event) => event.preventDefault()}
+      <div className="messages-frame">
+        <div
+          className={hideContent ? "messages message-blurred" : "messages"}
+          ref={listRef}
+          data-testid="messages"
+        >
+          {room.messages.map((message) => (
+            <MessageItem
+              key={message.id}
+              room={room}
+              message={message}
+              selected={selectedId === message.id}
+              onSelect={onMessageClick}
+              onLongPressStart={beginLongPress}
+              onLongPressCancel={cancelLongPress}
+              onReply={chooseReply}
+            />
+          ))}
+        </div>
+        {hideContent && (
+          <button
+            type="button"
+            className="reveal-overlay"
+            data-testid="tap-to-reveal"
+            onClick={() => setRevealed(true)}
           >
-            {selectedId === message.id && (
-              <button
-                type="button"
-                className="reply-option"
-                data-testid="reply-option"
-                onClick={(event) => chooseReply(message, event)}
-              >
-                Reply
-              </button>
-            )}
-            {message.re !== undefined && <ReplyIndicator room={room} re={message.re} />}
-            <span className="message-text">{message.text}</span>
-          </div>
-        ))}
+            Tap to reveal
+          </button>
+        )}
       </div>
 
       {room.status === "active" && (
@@ -144,6 +186,9 @@ export function Chat({ room }: { room: RoomApi }) {
               type="text"
               value={draft}
               maxLength={MAX_TEXT_LENGTH}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -173,6 +218,61 @@ export function Chat({ room }: { room: RoomApi }) {
         </div>
       )}
     </>
+  );
+}
+
+interface MessageItemProps {
+  room: RoomApi;
+  message: ReceivedMessage;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  onLongPressStart: (id: string) => void;
+  onLongPressCancel: () => void;
+  onReply: (message: ReceivedMessage, event: MouseEvent) => void;
+}
+
+function MessageItem({
+  room,
+  message,
+  selected,
+  onSelect,
+  onLongPressStart,
+  onLongPressCancel,
+  onReply,
+}: MessageItemProps) {
+  const [faded, setFaded] = useState(false);
+
+  useEffect(() => {
+    if (MESSAGE_VISIBLE_MS <= 0) return;
+    const timer = setTimeout(() => setFaded(true), MESSAGE_VISIBLE_MS);
+    return () => clearTimeout(timer);
+  }, [message.id]);
+
+  const className = MESSAGE_VISIBLE_MS > 0 && faded ? "message message-faded" : "message";
+
+  return (
+    <div
+      className={className}
+      onClick={() => onSelect(message.id)}
+      onPointerDown={() => onLongPressStart(message.id)}
+      onPointerUp={onLongPressCancel}
+      onPointerLeave={onLongPressCancel}
+      onPointerCancel={onLongPressCancel}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {selected && (
+        <button
+          type="button"
+          className="reply-option"
+          data-testid="reply-option"
+          onClick={(event) => onReply(message, event)}
+        >
+          Reply
+        </button>
+      )}
+      {message.re !== undefined && <ReplyIndicator room={room} re={message.re} />}
+      <span className="message-text">{message.text}</span>
+    </div>
   );
 }
 

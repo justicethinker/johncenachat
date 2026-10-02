@@ -23,6 +23,8 @@ function makeRoom(overrides: Partial<RoomApi> = {}): RoomApi {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  Reflect.deleteProperty(document, "hidden");
+  Reflect.deleteProperty(document, "hasFocus");
 });
 
 describe("reply", () => {
@@ -123,5 +125,46 @@ describe("incoming reply rendering", () => {
     render(<Chat room={room} />);
     expect(screen.getByTestId("reply-generic")).toBeTruthy();
     expect(screen.queryByTestId("reply-quote")).toBeNull();
+  });
+});
+
+describe("privacy: blur behind Tap to reveal", () => {
+  it("blurs the list when the tab becomes hidden and reveals on tap", () => {
+    const room = makeRoom({ messages: [{ id: "r1", text: "secret words" }] });
+    render(<Chat room={room} />);
+    expect(screen.queryByTestId("tap-to-reveal")).toBeNull();
+    expect(screen.getByTestId("messages").className).not.toContain("message-blurred");
+
+    // The tab is hidden.
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(screen.getByTestId("tap-to-reveal").textContent).toBe("Tap to reveal");
+    expect(screen.getByTestId("messages").className).toContain("message-blurred");
+
+    fireEvent.click(screen.getByTestId("tap-to-reveal"));
+    expect(screen.queryByTestId("tap-to-reveal")).toBeNull();
+    expect(screen.getByTestId("messages").className).not.toContain("message-blurred");
+  });
+
+  it("blurs the list when the window loses focus", () => {
+    const room = makeRoom({ messages: [{ id: "r1", text: "secret words" }] });
+    render(<Chat room={room} />);
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(screen.getByTestId("tap-to-reveal")).toBeTruthy();
+    expect(screen.getByTestId("messages").className).toContain("message-blurred");
+
+    // Regaining focus hides the overlay again.
+    Reflect.deleteProperty(document, "hasFocus");
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.queryByTestId("tap-to-reveal")).toBeNull();
+    expect(screen.getByTestId("messages").className).not.toContain("message-blurred");
   });
 });

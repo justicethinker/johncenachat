@@ -367,3 +367,38 @@ body {
 .reply-cancel:focus-visible {
   color: var(--text);
 }
+
+/* --- Privacy: blur overlay + optional fade --- */
+
+.messages-frame {
+  position: relative;
+}
+
+.message-blurred {
+  filter: blur(10px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.reveal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  appearance: none;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: rgba(14, 15, 18, 0.85);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.reveal-overlay:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.message-faded {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
