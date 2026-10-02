@@ -245,6 +245,9 @@ importers:
 
   packages/protocol:
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

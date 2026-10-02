@@ -1,8 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { PROTOCOL_VERSION } from "./index.js";
+import * as protocol from "./index.js";
 
-describe("skeleton", () => {
-  it("loads the protocol package", () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+describe("protocol public API", () => {
+  it("exports the expected surface", () => {
+    const expected = [
+      "base64UrlToBytes",
+      "bytesToBase64Url",
+      "decryptMessage",
+      "deriveKeys",
+      "encryptMessage",
+      "generateLabel",
+      "generateMessageId",
+      "generatePeerId",
+      "generateRoomId",
+      "generateSecret",
+      "pad",
+      "parseClientFrame",
+      "parsePayload",
+      "parseServerFrame",
+      "ProtocolError",
+      "unpad",
+    ];
+    for (const name of expected) {
+      expect(protocol, `missing export: ${name}`).toHaveProperty(name);
+    }
   });
 });

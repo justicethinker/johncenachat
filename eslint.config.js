@@ -10,8 +10,7 @@ const noConsoleVerbose = {
 
 const noBrowserStorage = [
   {
-    selector:
-      "MemberExpression[object.name='document'][property.name='cookie']",
+    selector: "MemberExpression[object.name='document'][property.name='cookie']",
     message: "Cookies are forbidden. Nothing may be stored in the browser.",
   },
   {
