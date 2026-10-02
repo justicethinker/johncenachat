@@ -266,3 +266,104 @@ body {
 .tick-visible {
   opacity: 1;
 }
+
+/* --- Reply --- */
+
+.message {
+  cursor: pointer;
+}
+
+.message-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.reply-option {
+  appearance: none;
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 12px;
+  min-height: 36px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.reply-option:hover,
+.reply-option:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.reply-quote {
+  border-left: 3px solid var(--accent);
+  background: #1b1d24;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.reply-quote-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-generic {
+  border-left: 3px solid var(--border);
+  background: #1b1d24;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #6d6f7a;
+  margin-bottom: 2px;
+}
+
+.composer-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reply-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1b1d24;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 6px 6px 10px;
+  font-size: 0.85rem;
+}
+
+.reply-chip-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.reply-cancel {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  min-width: 40px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.reply-cancel:hover,
+.reply-cancel:focus-visible {
+  color: var(--text);
+}

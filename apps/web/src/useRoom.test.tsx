@@ -348,6 +348,17 @@ describe("useRoom connection state machine", () => {
     });
     await until(() => harnessApi!.messages.length === 2);
     expect(harnessApi!.messages[1]!.text).toBe("their message");
+
+    // Replies carry `re` in the encrypted payload.
+    const repliedTo = harnessApi!.messages[0]!.id;
+    expect(harnessApi!.sendMessage("follow-up", repliedTo)).toBe(true);
+    await until(() => socket.sent.length === 3);
+    const replyFrame = JSON.parse(socket.sent[2]!) as { type: string; c: string };
+    const replyPayload = await decryptMessage(replyFrame.c, encKey, roomId);
+    expect(replyPayload.text).toBe("follow-up");
+    expect(replyPayload.re).toBe(repliedTo);
+    // Still one-sided: nothing the sender said is ever stored.
+    expect(harnessApi!.messages).toHaveLength(2);
   });
 
   it("clears the input on send and shows a delivered tick that fades", async () => {
