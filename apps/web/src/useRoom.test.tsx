@@ -1,0 +1,370 @@
+import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  decryptMessage,
+  deriveKeys,
+  encryptMessage,
+  generateMessageId,
+  generateRoomId,
+  generateSecret,
+} from "@aside/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Room } from "./Room";
+import { type RoomApi, useRoom } from "./useRoom";
+
+/**
+ * Mock WebSocket driving the connection state machine without a server.
+ */
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  static instances: MockWebSocket[] = [];
+  static latest(): MockWebSocket {
+    const instance = MockWebSocket.instances.at(-1);
+    if (!instance) throw new Error("no WebSocket constructed yet");
+    return instance;
+  }
+  static reset(): void {
+    MockWebSocket.instances = [];
+  }
+
+  url: string;
+  readyState = MockWebSocket.CONNECTING;
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+  }
+
+  send(data: string): void {
+    if (this.readyState !== MockWebSocket.OPEN) throw new Error("not open");
+    this.sent.push(data);
+  }
+
+  close(): void {
+    if (this.readyState === MockWebSocket.CLOSED) return;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
+
+  /** Test helpers. */
+  open(): void {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+  }
+  message(frame: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  drop(): void {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
+}
+
+let harnessApi: RoomApi | null = null;
+
+function Harness({ roomId }: { roomId: string }) {
+  harnessApi = useRoom(roomId);
+  return null;
+}
+
+async function until(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+}
+
+async function joinFlow(roomId: string, secret: string): Promise<MockWebSocket> {
+  window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+  render(<Harness roomId={roomId} />);
+  await until(() => MockWebSocket.instances.length === 1);
+  const socket = MockWebSocket.latest();
+  act(() => {
+    socket.open();
+  });
+  await until(() => socket.sent.length === 1);
+  act(() => {
+    socket.message({ type: "joined", label: "4821", peers: 1 });
+  });
+  await until(() => harnessApi !== null && harnessApi.status === "waiting");
+  return socket;
+}
+
+beforeEach(() => {
+  harnessApi = null;
+  MockWebSocket.reset();
+  vi.stubGlobal("WebSocket", MockWebSocket);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+});
+
+describe("useRoom connection state machine", () => {
+  it("reads the secret, strips the fragment, and joins with the derived auth token", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+
+    render(<Room roomId={roomId} />);
+    // Fragment is gone from the URL bar immediately after mount.
+    expect(window.location.hash).toBe("");
+    expect(window.location.pathname).toBe(`/r/${roomId}`);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    expect(socket.url).toBe(
+      `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws/${roomId}`,
+    );
+
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    const join = JSON.parse(socket.sent[0]!) as { type: string; auth: string; peerId: string };
+    expect(join.type).toBe("join");
+    expect(join.peerId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    const { authToken } = await deriveKeys(secret);
+    expect(join.auth).toBe(authToken);
+  });
+
+  it("moves through waiting, active and back, then ends with a clear message", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+
+    act(() => {
+      socket.message({ type: "joined", label: "4821", peers: 1 });
+    });
+    await until(() => screen.queryByTestId("waiting") !== null);
+    expect(screen.getByTestId("label").textContent).toBe("You are 4821");
+    expect(screen.getByTestId("presence").className).toContain("presence-off");
+
+    act(() => {
+      socket.message({ type: "peer", state: "joined", peerLabel: "0377" });
+    });
+    await until(() => screen.getByTestId("presence").className.includes("presence-on"));
+    expect(screen.queryByTestId("waiting")).toBeNull();
+
+    act(() => {
+      socket.message({ type: "peer", state: "away" });
+    });
+    await until(() => screen.getByTestId("presence").className.includes("presence-off"));
+    expect(screen.queryByTestId("waiting")).not.toBeNull();
+
+    act(() => {
+      socket.message({ type: "closed", reason: "peer_left" });
+    });
+    await until(() => screen.queryByTestId("ended") !== null);
+    expect(screen.getByTestId("ended").textContent).toBe(
+      "The other person left. This chat is closed.",
+    );
+    // No reconnect after the room was destroyed.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it("shows the incomplete screen when the fragment is missing", () => {
+    const roomId = generateRoomId();
+    window.history.pushState(null, "", `/r/${roomId}`);
+    render(<Room roomId={roomId} />);
+    expect(screen.getByTestId("incomplete").textContent).toBe("This link is incomplete");
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it("shows the incomplete screen for a malformed room id and still strips the url", () => {
+    window.history.pushState(null, "", `/r/nope#secretnotvalid`);
+    render(<Room roomId="nope" />);
+    expect(screen.getByTestId("incomplete")).toBeTruthy();
+    expect(window.location.hash).toBe("");
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it("reconnects with the same peerId after a drop", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Harness roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const first = MockWebSocket.latest();
+    act(() => {
+      first.open();
+    });
+    await until(() => first.sent.length === 1);
+    const firstJoin = JSON.parse(first.sent[0]!) as { peerId: string };
+    act(() => {
+      first.message({ type: "joined", label: "4821", peers: 1 });
+    });
+
+    // From here on, control time so the reconnect delay runs instantly.
+    vi.useFakeTimers();
+    // Socket drops: the room enters "connecting" and retries after 1s.
+    act(() => {
+      first.drop();
+    });
+    expect(harnessApi!.status).toBe("connecting");
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    const second = MockWebSocket.latest();
+    act(() => {
+      second.open();
+    });
+    await until(() => second.sent.length === 1);
+    const secondJoin = JSON.parse(second.sent[0]!) as { peerId: string };
+    expect(secondJoin.peerId).toBe(firstJoin.peerId);
+
+    act(() => {
+      second.message({ type: "joined", label: "4821", peers: 2 });
+    });
+    expect(harnessApi!.status).toBe("active");
+    expect(harnessApi!.label).toBe("4821");
+  });
+
+  it("ends with reconnect_failed once the grace window runs out", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Harness roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const first = MockWebSocket.latest();
+    act(() => {
+      first.open();
+    });
+    await until(() => first.sent.length === 1);
+    act(() => {
+      first.message({ type: "joined", label: "4821", peers: 1 });
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      first.drop();
+    });
+    for (let i = 0; i < 60 && harnessApi!.status !== "ended"; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      const instance = MockWebSocket.latest();
+      if (instance.readyState === MockWebSocket.CONNECTING) {
+        act(() => {
+          instance.drop();
+        });
+      }
+    }
+    expect(harnessApi!.status).toBe("ended");
+    expect(harnessApi!.endReason).toBe("reconnect_failed");
+  });
+
+  it("encrypts outgoing messages, tracks sent ids and never stores own messages", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const socket = await joinFlow(roomId, secret);
+
+    act(() => {
+      socket.message({ type: "peer", state: "joined", peerLabel: "0377" });
+    });
+    await until(() => harnessApi!.status === "active");
+
+    expect(harnessApi!.sendMessage("hello there")).toBe(true);
+    await until(() => socket.sent.length === 2);
+    const frame = JSON.parse(socket.sent[1]!) as { type: string; n: number; c: string };
+    expect(frame.type).toBe("msg");
+
+    const { encKey } = await deriveKeys(secret);
+    const payload = await decryptMessage(frame.c, encKey, roomId);
+    expect(payload.text).toBe("hello there");
+    expect(harnessApi!.sentIds.has(payload.id)).toBe(true);
+    // One-sided view: the sender never stores or renders its own message.
+    expect(harnessApi!.messages).toHaveLength(0);
+
+    // Rejected sends are not queued.
+    expect(harnessApi!.sendMessage("")).toBe(false);
+    expect(harnessApi!.sendMessage("a".repeat(1501))).toBe(false);
+
+    // Ack flips the delivered tick.
+    act(() => {
+      socket.message({ type: "ack", n: frame.n });
+    });
+    expect(harnessApi!.delivered).toBe(true);
+
+    // Replayed message ids are dropped.
+    const duplicate = await encryptMessage(
+      { id: generateMessageId(), text: "first" },
+      encKey,
+      roomId,
+    );
+    act(() => {
+      socket.message({ type: "msg", c: duplicate });
+    });
+    await until(() => harnessApi!.messages.length === 1);
+    const duplicateAgain = await encryptMessage(
+      { id: harnessApi!.messages[0]!.id, text: "first again" },
+      encKey,
+      roomId,
+    );
+    act(() => {
+      socket.message({ type: "msg", c: duplicateAgain });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(harnessApi!.messages).toHaveLength(1);
+
+    // A fresh incoming message is decrypted and stored.
+    const fresh = await encryptMessage(
+      { id: generateMessageId(), text: "their message" },
+      encKey,
+      roomId,
+    );
+    act(() => {
+      socket.message({ type: "msg", c: fresh });
+    });
+    await until(() => harnessApi!.messages.length === 2);
+    expect(harnessApi!.messages[1]!.text).toBe("their message");
+  });
+
+  it("surfaces join errors as an ended state", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({ type: "err", code: "room_full" });
+    });
+    await until(() => screen.queryByTestId("ended") !== null);
+    expect(screen.getByTestId("ended").textContent).toBe("This chat already has two people in it.");
+  });
+});

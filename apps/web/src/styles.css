@@ -137,3 +137,70 @@ body {
 .notice li {
   margin: 4px 0;
 }
+
+/* --- Chat (connection + status screens) --- */
+
+.chat {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.you-are {
+  font-weight: 600;
+}
+
+.presence {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: #4b4d55;
+}
+
+.presence-on {
+  background: #3fb950;
+  border-color: #3fb950;
+}
+
+.presence-off {
+  background: #4b4d55;
+}
+
+.chat-body {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  min-height: 200px;
+}
+
+.status-line {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+  padding: 24px 0;
+}
+
+.banner {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #6e3b1f;
+  background: #2a1c10;
+  color: #f0b26f;
+  font-size: 0.9rem;
+}

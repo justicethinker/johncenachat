@@ -1,12 +1,12 @@
-import { Home } from "./Home";
 import { Room } from "./Room";
+import { Home } from "./Home";
 import { useRoute } from "./router";
 
 export function App() {
   const route = useRoute();
 
   if (route.kind === "room") {
-    return <Room key={route.roomId} />;
+    return <Room key={route.roomId} roomId={route.roomId} />;
   }
   if (route.kind === "home") {
     return <Home />;
