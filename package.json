@@ -1,0 +1,25 @@
+{
+  "name": "aside",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "scripts": {
+    "dev": "pnpm --filter @aside/protocol build && pnpm -r --parallel --filter \"!@aside/protocol\" dev",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @aside/protocol build && pnpm -r --filter \"!@aside/e2e\" test",
+    "test:e2e": "pnpm --filter @aside/e2e test",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}
