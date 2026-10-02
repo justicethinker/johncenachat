@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
   decryptMessage,
   deriveKeys,
@@ -348,6 +348,44 @@ describe("useRoom connection state machine", () => {
     });
     await until(() => harnessApi!.messages.length === 2);
     expect(harnessApi!.messages[1]!.text).toBe("their message");
+  });
+
+  it("clears the input on send and shows a delivered tick that fades", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({ type: "joined", label: "4821", peers: 2 });
+    });
+    await until(() => screen.queryByTestId("message-input") !== null);
+
+    fireEvent.change(screen.getByTestId("message-input"), { target: { value: "ping" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // Clears immediately on send.
+    expect((screen.getByTestId("message-input") as HTMLInputElement).value).toBe("");
+
+    await until(() => socket.sent.length === 2);
+    const frame = JSON.parse(socket.sent[1]!) as { type: string; n: number };
+    expect(frame.type).toBe("msg");
+
+    act(() => {
+      socket.message({ type: "ack", n: frame.n });
+    });
+    await until(() => screen.getByTestId("delivered-tick").className.includes("tick-visible"));
+
+    // Fades after about 1.2 seconds.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    });
+    expect(screen.getByTestId("delivered-tick").className).not.toContain("tick-visible");
   });
 
   it("surfaces join errors as an ended state", async () => {

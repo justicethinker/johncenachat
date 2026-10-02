@@ -1,4 +1,4 @@
-import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { generateRoomId, generateSecret } from "@aside/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Room } from "./Room";
@@ -91,8 +91,41 @@ describe("two tabs against the real relay", () => {
 
   afterEach(() => {
     cleanup();
+    document.querySelectorAll("[data-custom-container]").forEach((element) => element.remove());
     window.history.pushState(null, "", "/");
   });
+
+  function makeContainer(): HTMLDivElement {
+    const container = document.createElement("div");
+    container.dataset.customContainer = "1";
+    document.body.appendChild(container);
+    return container;
+  }
+
+  async function openTwoTabs(): Promise<{
+    roomId: string;
+    containerA: HTMLDivElement;
+    containerB: HTMLDivElement;
+    a: ReturnType<typeof render>;
+    b: ReturnType<typeof render>;
+  }> {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const containerA = makeContainer();
+    const containerB = makeContainer();
+
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    const a = render(<Room roomId={roomId} />, { container: containerA });
+    await within(containerA).findByTestId("waiting");
+
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    const b = render(<Room roomId={roomId} />, { container: containerB });
+    await within(containerB).findByRole("textbox"); // active: composer visible
+    await waitFor(() =>
+      expect(within(containerA).getByTestId("presence").className).toContain("presence-on"),
+    );
+    return { roomId, containerA, containerB, a, b };
+  }
 
   it("shows presence changes and ends with a clear message when one tab closes", async () => {
     const roomId = generateRoomId();
@@ -114,7 +147,7 @@ describe("two tabs against the real relay", () => {
     // Tab B opens the same link (its own copy of the URL).
     window.history.pushState(null, "", `/r/${roomId}#${secret}`);
     const b = render(<Room roomId={roomId} />, { container: containerB });
-    await within(containerB).findByTestId("active-placeholder");
+    await within(containerB).findByRole("textbox");
     const labelB = extractLabel(containerB);
     expect(labelB).toMatch(/^\d{4}$/);
     expect(labelB).not.toBe(labelA);
@@ -137,5 +170,43 @@ describe("two tabs against the real relay", () => {
     a.unmount();
     containerA.remove();
     containerB.remove();
+  });
+
+  it("shows only the other person's messages on each screen", async () => {
+    const { containerA, containerB, b } = await openTwoTabs();
+
+    // A sends: the input clears immediately and A never renders its own message.
+    const inputA = within(containerA).getByTestId("message-input") as HTMLInputElement;
+    fireEvent.change(inputA, { target: { value: "hello from A" } });
+    fireEvent.click(within(containerA).getByRole("button", { name: "Send" }));
+    expect(inputA.value).toBe("");
+
+    await waitFor(() => expect(within(containerB).getByText("hello from A")).toBeTruthy());
+    expect(within(containerA).queryByText("hello from A")).toBeNull();
+    expect(within(containerA).getByTestId("messages").textContent).toBe("");
+
+    // A gets a delivered tick after the ack.
+    await waitFor(() =>
+      expect(within(containerA).getByTestId("delivered-tick").className).toContain("tick-visible"),
+    );
+
+    // B replies.
+    const inputB = within(containerB).getByTestId("message-input") as HTMLInputElement;
+    fireEvent.change(inputB, { target: { value: "hi A, its B" } });
+    fireEvent.click(within(containerB).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(within(containerA).getByText("hi A, its B")).toBeTruthy());
+    expect(within(containerB).queryByText("hi A, its B")).toBeNull();
+
+    // One-sided streams: each screen contains exactly the other person's text.
+    expect(within(containerA).getByTestId("messages").textContent).toBe("hi A, its B");
+    expect(within(containerB).getByTestId("messages").textContent).toBe("hello from A");
+
+    // Identical styling for every message, no names or timestamps.
+    const messageA = within(containerA).getByTestId("messages").firstElementChild;
+    const messageB = within(containerB).getByTestId("messages").firstElementChild;
+    expect(messageA?.className).toBe("message");
+    expect(messageB?.className).toBe("message");
+
+    b.unmount();
   });
 });

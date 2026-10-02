@@ -1,3 +1,4 @@
+import { Chat } from "./Chat";
 import { navigate } from "./router";
 import { type EndReason, useRoom } from "./useRoom";
 
@@ -96,11 +97,7 @@ export function Room({ roomId }: { roomId: string }) {
               Waiting for the other person to open the link…
             </p>
           )}
-          {room.status === "active" && (
-            <p className="status-line" data-testid="active-placeholder">
-              {room.messages.length === 0 ? "Connected." : `${room.messages.length} received`}
-            </p>
-          )}
+          <Chat room={room} />
           {room.lastError && (
             <p className="banner" role="alert" data-testid="error-banner">
               {ERROR_MESSAGES[room.lastError] ?? "Something went wrong."}

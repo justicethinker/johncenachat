@@ -204,3 +204,65 @@ body {
   color: #f0b26f;
   font-size: 0.9rem;
 }
+
+/* --- One-sided message list + composer --- */
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55dvh;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+}
+
+.message {
+  background: #22242b;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  max-width: 85%;
+  align-self: flex-start;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  min-height: 48px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 16px; /* prevents iOS auto-zoom */
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.send {
+  min-height: 48px;
+}
+
+.tick {
+  width: 24px;
+  text-align: center;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  user-select: none;
+}
+
+.tick-visible {
+  opacity: 1;
+}
