@@ -87,6 +87,7 @@ test("two contexts exchange messages and each page shows only the other's text",
   try {
     const link = await createChat(a);
     const invite = new URL(link);
+    const origin = invite.origin;
     const secret = invite.hash.slice(1);
 
     // The link is /r/{22-char roomId}#{secret}: the secret lives only in
@@ -140,6 +141,14 @@ test("two contexts exchange messages and each page shows only the other's text",
       // ...and neither does any plaintext message text.
       expect(all, `plaintext from A leaked for ${name}`).not.toContain(textA);
       expect(all, `plaintext from B leaked for ${name}`).not.toContain(textB);
+      // Every request stays on this origin: no third-party hosts, ever.
+      for (const request of wire.requests) {
+        const url = request.slice(request.indexOf(" ") + 1);
+        expect(
+          url.startsWith(origin) || url.startsWith("data:"),
+          `third-party request from ${name}: ${request}`,
+        ).toBe(true);
+      }
     }
   } finally {
     await contextA.close();
