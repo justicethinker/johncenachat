@@ -14,4 +14,14 @@ export default defineConfig({
       "/healthz": { target: "http://127.0.0.1:8080" },
     },
   },
+  preview: {
+    // Used by the Playwright e2e suite: serves the production build and
+    // proxies the relay, mirroring how Caddy does it in production.
+    port: 4173,
+    strictPort: true,
+    proxy: {
+      "/ws": { target: "ws://127.0.0.1:8080", ws: true },
+      "/healthz": { target: "http://127.0.0.1:8080" },
+    },
+  },
 });

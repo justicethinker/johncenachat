@@ -270,8 +270,25 @@ export function useRoom(roomId: string): RoomApi {
       reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
     }
 
+    // Closing the tab or navigating away is an explicit exit: tell the
+    // server so the room is destroyed immediately for the other person.
+    const leaveOnce = (): void => {
+      const socket = wsRef.current;
+      if (joinedRef.current && socket && socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(JSON.stringify({ type: "leave" }));
+        } catch {
+          // Socket already closing; the server reaps the room anyway.
+        }
+      }
+    };
+    window.addEventListener("beforeunload", leaveOnce);
+    window.addEventListener("pagehide", leaveOnce);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("beforeunload", leaveOnce);
+      window.removeEventListener("pagehide", leaveOnce);
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       clearConnectTimer();
       const socket = wsRef.current;

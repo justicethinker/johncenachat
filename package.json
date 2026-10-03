@@ -8,7 +8,7 @@
     "dev": "pnpm --filter @aside/protocol build && pnpm -r --parallel --filter \"!@aside/protocol\" dev",
     "build": "pnpm -r build",
     "test": "pnpm --filter @aside/protocol build && pnpm -r --filter \"!@aside/e2e\" test",
-    "test:e2e": "pnpm --filter @aside/e2e test",
+    "test:e2e": "pnpm build && pnpm --filter @aside/e2e test",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
