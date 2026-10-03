@@ -90,10 +90,10 @@ test("two contexts exchange messages and each page shows only the other's text",
     const origin = invite.origin;
     const secret = invite.hash.slice(1);
 
-    // The link is /r/{22-char roomId}#{secret}: the secret lives only in
+    // The link is /r/{11-char roomId}#{secret}: the secret lives only in
     // the fragment, which is never part of any request.
-    expect(invite.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{22}$/);
-    expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(invite.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{11}$/);
+    expect(secret).toMatch(/^[A-Za-z0-9_-]{22}$/);
     // The fragment is stripped from the address bar right after load.
     expect(new URL(a.url()).hash).toBe("");
 

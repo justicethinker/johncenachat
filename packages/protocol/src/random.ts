@@ -14,12 +14,12 @@ function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** 16 random bytes, base64url (22 chars). */
+/** 8 random bytes, base64url (11 chars). */
 export function generateRoomId(): string {
   return bytesToBase64Url(randomBytes(ROOM_ID_BYTES));
 }
 
-/** 32 random bytes, base64url (43 chars). Lives only in the URL fragment. */
+/** 16 random bytes, base64url (22 chars). Lives only in the URL fragment. */
 export function generateSecret(): string {
   return bytesToBase64Url(randomBytes(SECRET_BYTES));
 }

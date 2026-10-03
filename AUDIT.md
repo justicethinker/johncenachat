@@ -55,7 +55,7 @@ then `cd deploy && docker compose up -d --build` and inspect with `curl -sk -D -
 
 - e2e (`e2e/tests/privacy.spec.ts`, test 1) captures all HTTP requests and all
   WebSocket frames (sent and received) in both isolated contexts and asserts:
-  the 43-char secret appears in none of them; no plaintext message text
+  the 22-char secret appears in none of them; no plaintext message text
   appears in any frame; and after load `location.hash` is empty (fragment
   stripped via `history.replaceState`).
 - Browsers never include fragments in requests by construction, and the server

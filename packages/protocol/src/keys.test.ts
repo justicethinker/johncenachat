@@ -75,6 +75,6 @@ describe("deriveKeys", () => {
     await expect(deriveKeys("not-base64!")).rejects.toThrow(ProtocolError);
     await expect(deriveKeys("AA")).rejects.toThrow(ProtocolError);
     await expect(deriveKeys("")).rejects.toThrow(ProtocolError);
-    expect(SECRET_BYTES).toBe(32);
+    expect(SECRET_BYTES).toBe(16);
   });
 });

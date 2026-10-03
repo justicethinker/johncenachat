@@ -13,16 +13,16 @@ import {
 } from "./random.js";
 
 describe("id generators", () => {
-  it("generates a room id of 16 bytes / 22 chars", () => {
+  it("generates a room id of 8 bytes / 11 chars", () => {
     const roomId = generateRoomId();
-    expect(roomId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(roomId).toMatch(/^[A-Za-z0-9_-]{11}$/);
     expect(base64UrlToBytes(roomId)).toHaveLength(ROOM_ID_BYTES);
     expect(isValidRoomId(roomId)).toBe(true);
   });
 
-  it("generates a secret of 32 bytes / 43 chars", () => {
+  it("generates a secret of 16 bytes / 22 chars", () => {
     const secret = generateSecret();
-    expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secret).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(base64UrlToBytes(secret)).toHaveLength(SECRET_BYTES);
     expect(isValidSecret(secret)).toBe(true);
   });

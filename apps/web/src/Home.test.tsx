@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Home } from "./Home";
 import { parseRoute } from "./router";
 
-const INVITE_RE = /^https?:\/\/[^/]+\/r\/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]{43}$/;
+const INVITE_RE = /^https?:\/\/[^/]+\/r\/[A-Za-z0-9_-]{11}#[A-Za-z0-9_-]{22}$/;
 
 afterEach(() => {
   cleanup();
@@ -19,7 +19,7 @@ describe("Home", () => {
     expect(screen.queryByTestId("invite-link")).toBeNull();
   });
 
-  it("creates a link with a 22-char room id and the secret only in the fragment", () => {
+  it("creates a link with an 11-char room id and the secret only in the fragment", () => {
     render(<Home />);
     fireEvent.click(screen.getByRole("button", { name: "Create chat" }));
 
@@ -27,8 +27,8 @@ describe("Home", () => {
     expect(link).toMatch(INVITE_RE);
 
     const url = new URL(link);
-    expect(url.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{22}$/);
-    expect(url.hash).toMatch(/^#[A-Za-z0-9_-]{43}$/);
+    expect(url.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{11}$/);
+    expect(url.hash).toMatch(/^#[A-Za-z0-9_-]{22}$/);
     // The current page URL must not contain the secret at all yet.
     expect(window.location.href).not.toContain(url.hash.slice(1));
   });

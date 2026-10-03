@@ -71,7 +71,7 @@ export function Room({ roomId }: { roomId: string }) {
   }
 
   return (
-    <main className="page">
+    <main className="page page-chat">
       <div className="chat">
         <header className="chat-header">
           <span className="you-are" data-testid="label">

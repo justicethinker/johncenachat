@@ -12,6 +12,10 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%; /* never auto-inflate fonts on rotate */
+}
+
 html,
 body {
   margin: 0;
@@ -28,14 +32,46 @@ body {
     sans-serif;
   background: var(--bg);
   color: var(--text);
+  /* A pull-to-refresh mid-chat would reload and lose the room (the secret is
+     stripped from the URL on purpose), so disable it. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* No double-tap zoom delay on controls; still allow pinch-zoom. */
+button,
+input,
+.message,
+.link-box {
+  touch-action: manipulation;
 }
 
 .page {
+  min-height: 100vh;
   min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
+  /* Notch and home-indicator safe areas (viewport-fit=cover). Falls back to
+     the plain padding above on browsers without env() support. */
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+}
+
+/* Chat screen: app-style full-height layout. The header stays on top, the
+   composer stays at the bottom (above the keyboard, with
+   interactive-widget=resizes-content), and the message list scrolls alone. */
+.page-chat {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 
 .home {
@@ -71,8 +107,11 @@ body {
   font-size: 1rem;
   padding: 14px 20px;
   min-height: 48px;
+  min-width: 48px;
   border-radius: 10px;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .btn:focus-visible {
@@ -143,6 +182,7 @@ body {
 .chat {
   width: 100%;
   max-width: 640px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -185,7 +225,11 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
-  min-height: 200px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .status-line {
@@ -193,6 +237,11 @@ body {
   color: var(--muted);
   text-align: center;
   padding: 24px 0;
+  /* Center the waiting/connecting message in the space above the list. */
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .banner {
@@ -211,9 +260,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 55dvh;
+  flex: 1;
   min-height: 120px;
   overflow-y: auto;
+  overscroll-behavior: contain; /* don't chain-scroll the page behind it */
+  -webkit-overflow-scrolling: touch;
   padding: 4px 0 12px;
 }
 
@@ -285,9 +336,9 @@ body {
   border: 1px dashed var(--border);
   color: var(--muted);
   border-radius: 8px;
-  padding: 6px 12px;
-  min-height: 36px;
-  font-size: 0.85rem;
+  padding: 8px 14px;
+  min-height: 44px; /* comfortable thumb target */
+  font-size: 0.9rem;
   cursor: pointer;
 }
 
@@ -372,6 +423,9 @@ body {
 
 .messages-frame {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 .message-blurred {

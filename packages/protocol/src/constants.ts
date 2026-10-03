@@ -1,8 +1,8 @@
 /** Constants: sizes, bucket sizes, limits and timeouts (spec sections 5, 6, 7). */
 
 // --- Sizes ---
-export const ROOM_ID_BYTES = 16; // base64url -> 22 chars
-export const SECRET_BYTES = 32; // base64url -> 43 chars
+export const ROOM_ID_BYTES = 8; // base64url -> 11 chars (shortened link, spec §5 updated by request)
+export const SECRET_BYTES = 16; // base64url -> 22 chars (128-bit link secret)
 export const PEER_ID_BYTES = 16; // base64url -> 22 chars
 export const MESSAGE_ID_BYTES = 8; // base64url -> 11 chars
 export const AUTH_TOKEN_BYTES = 32; // base64url -> 43 chars
