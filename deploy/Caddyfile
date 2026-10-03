@@ -1,0 +1,55 @@
+{
+	# Nothing is logged. The relay never records who connects, and neither
+	# does the edge: `docker compose logs` must show no request data at all.
+	log {
+		output discard
+	}
+}
+
+{$ASIDE_DOMAIN:aside.localhost} {
+	# Local development certificate (an internal CA), so `docker compose up`
+	# serves HTTPS without a public domain. Delete this single line in
+	# production: Caddy then provisions a real Let's Encrypt certificate
+	# automatically.
+	tls internal
+
+	# Belt and braces: no access log for this site either.
+	log {
+		output discard
+	}
+
+	header {
+		# Nothing third-party, ever: no CDNs, no fonts, no analytics, no images
+		# from anywhere but this origin.
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# The HTML is the same generic shell for every room and must never be
+	# cached: a refresh has to come back to the exact same bytes.
+	@html {
+		path *.html / /r/*
+	}
+	header @html Cache-Control "no-store"
+
+	# Relay the WebSocket and nothing else. Client addresses are not needed
+	# downstream, so they are not forwarded; the relay rate-limits on the
+	# socket address alone.
+	handle /ws/* {
+		reverse_proxy server:8080 {
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Proto
+			header_up -X-Forwarded-Host
+		}
+	}
+
+	# Everything else is the static site. /r/{roomId} falls back to the same
+	# index.html, so every invite link returns identical, secret-free HTML
+	# (link previews can only do an HTTP GET, so they can never join).
+	handle {
+		root * /usr/share/caddy
+		try_files {path} /index.html
+		file_server
+	}
+}

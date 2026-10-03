@@ -1,0 +1,9 @@
+# Build context hygiene: everything is rebuilt inside the image.
+.git
+.freebuff
+**/node_modules
+**/dist
+**/coverage
+e2e/test-results
+e2e/playwright-report
+*.log

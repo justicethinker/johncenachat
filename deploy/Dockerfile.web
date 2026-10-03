@@ -1,0 +1,45 @@
+# The edge: the built static site served by Caddy, which also proxies /ws/*
+# to the relay. One image so the site and the Caddyfile ship together.
+#
+# The install stage below is byte-identical to the one in Dockerfile.server,
+# so BuildKit runs it once and both images share the download.
+
+FROM node:22-alpine AS build
+
+# pnpm version is pinned by the packageManager field in package.json.
+RUN corepack enable
+
+# Playwright is a dev-only dependency of the e2e workspace; never fetch its
+# browsers inside the image.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+WORKDIR /repo
+
+# Lockfile only first: `pnpm fetch` populates the content-addressable store
+# and is cached on its own, so an interrupted build resumes without
+# re-downloading anything.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
+    pnpm fetch --store-dir /pnpm/store
+
+COPY tsconfig.base.json ./
+COPY packages/protocol/package.json packages/protocol/
+COPY apps/server/package.json apps/server/
+COPY apps/web/package.json apps/web/
+COPY e2e/package.json e2e/
+
+RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir /pnpm/store
+
+COPY packages/protocol packages/protocol
+# apps/web's typecheck pulls in the relay sources from its integration test,
+# so the server sources have to be present too.
+COPY apps/server apps/server
+COPY apps/web apps/web
+
+RUN pnpm --filter @aside/web... build
+
+FROM caddy:2-alpine
+
+# Identical HTML for every /r/* path: no per-room metadata anywhere.
+COPY --from=build /repo/apps/web/dist /usr/share/caddy

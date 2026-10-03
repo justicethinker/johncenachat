@@ -1,0 +1,42 @@
+# One command deploy: `docker compose up -d --build`.
+#
+# Two services, no database, no cache, and nothing persistent except Caddy's
+# own certificate storage. The relay keeps rooms in process memory only.
+
+name: aside
+
+services:
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Set to your domain in production, e.g. ASIDE_DOMAIN=chat.example.com,
+      # and delete the `tls internal` line in Caddyfile so Caddy fetches a
+      # real certificate.
+      ASIDE_DOMAIN: ${ASIDE_DOMAIN:-aside.localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    # No published ports: the relay is reachable only from the Caddy
+    # container, and the client IP never gets past the edge anyway.
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,58 @@
+# The relay. Builds packages/protocol and apps/server, then ships only the
+# production dependencies. Runs as a non-root user and publishes no host port:
+# it is reachable only from the Caddy container on the compose network.
+#
+# The install stage below is byte-identical to the one in Dockerfile.web, so
+# BuildKit runs it once and both images share the download.
+
+FROM node:22-alpine AS build
+
+# pnpm version is pinned by the packageManager field in package.json.
+RUN corepack enable
+
+# Playwright is a dev-only dependency of the e2e workspace; never fetch its
+# browsers inside the image.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+WORKDIR /repo
+
+# Lockfile only first: `pnpm fetch` populates the content-addressable store
+# and is cached on its own, so an interrupted build resumes without
+# re-downloading anything.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
+    pnpm fetch --store-dir /pnpm/store
+
+COPY tsconfig.base.json ./
+COPY packages/protocol/package.json packages/protocol/
+COPY apps/server/package.json apps/server/
+COPY apps/web/package.json apps/web/
+COPY e2e/package.json e2e/
+
+RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir /pnpm/store
+
+COPY packages/protocol packages/protocol
+COPY apps/server apps/server
+
+RUN pnpm --filter @aside/protocol build \
+  && pnpm --filter @aside/server build \
+  && pnpm --filter @aside/server deploy --prod --legacy /out
+
+FROM node:22-alpine AS runtime
+
+ENV NODE_ENV=production PORT=8080
+
+RUN addgroup -S aside && adduser -S aside -G aside
+
+WORKDIR /app
+COPY --from=build --chown=aside:aside /out ./
+
+USER aside
+EXPOSE 8080
+
+# The relay answers /healthz and nothing else on plain HTTP.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=3s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+
+CMD ["node", "dist/index.js"]
