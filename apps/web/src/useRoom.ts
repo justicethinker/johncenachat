@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  MAX_PEERS,
   MAX_TEXT_LENGTH,
   RECONNECT_GRACE_MS,
   decryptMessage,
@@ -28,6 +29,8 @@ export type EndReason = CloseReason | ErrorCode | "reconnect_failed" | "left";
 
 export interface ReceivedMessage {
   id: string;
+  /** Server-stamped sender label (4 digits). */
+  from: string;
   text: string;
   re?: string;
 }
@@ -53,6 +56,8 @@ export interface RoomApi extends RoomState {
   clearError(): void;
   /** Leave now: tells the server to destroy the room and shows the ended screen. */
   endChat(): void;
+  /** Creator only: lock the room so no one else can join. One-way. */
+  lock(): void;
   /** Ids of messages this tab has sent (kept in memory only, for replies). */
   sentIds: ReadonlySet<string>;
 }
@@ -72,6 +77,18 @@ const INITIAL_STATE: RoomState = {
   delivered: false,
 };
 
+/**
+ * The creator's group size travels in the link query (`?cap=N`), not the
+ * fragment, so the fragment stays the secret alone. Anything out of range is
+ * dropped and the server default applies.
+ */
+function parseCap(search: string): number | null {
+  const raw = new URLSearchParams(search).get("cap");
+  if (raw === null || !/^\d+$/.test(raw)) return null;
+  const cap = Number(raw);
+  return cap >= 2 && cap <= MAX_PEERS ? cap : null;
+}
+
 const CONNECT_TIMEOUT_MS = 10_000;
 const RECONNECT_DELAY_MS = 1_000;
 /** Stop reconnecting a little before the server's grace window closes. */
@@ -80,7 +97,7 @@ const RECONNECT_DEADLINE_MS = RECONNECT_GRACE_MS - 2_000;
 export function useRoom(roomId: string): RoomApi {
   const [state, setState] = useState<RoomState>(INITIAL_STATE);
 
-  const secretRef = useRef<{ roomId: string; secret: string } | null>(null);
+  const secretRef = useRef<{ roomId: string; secret: string; cap: number | null } | null>(null);
   const keysRef = useRef<{ encKey: CryptoKey; authToken: string } | null>(null);
   const peerIdRef = useRef<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -103,7 +120,11 @@ export function useRoom(roomId: string): RoomApi {
     // the URL bar immediately: after this, it lives only in memory.
     if (secretRef.current === null || secretRef.current.roomId !== roomId) {
       const hash = window.location.hash;
-      secretRef.current = { roomId, secret: hash.startsWith("#") ? hash.slice(1) : "" };
+      secretRef.current = {
+        roomId,
+        secret: hash.startsWith("#") ? hash.slice(1) : "",
+        cap: parseCap(window.location.search),
+      };
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
     const secret = secretRef.current.secret;
@@ -154,7 +175,10 @@ export function useRoom(roomId: string): RoomApi {
           socket.close();
           return;
         }
-        socket.send(JSON.stringify({ type: "join", auth: keys.authToken, peerId }));
+        // `cap` is only honoured for the first joiner (the creator); the server
+        // ignores it for everyone else, so every link can carry it safely.
+        const cap = secretRef.current?.cap ?? undefined;
+        socket.send(JSON.stringify({ type: "join", auth: keys.authToken, peerId, cap }));
       };
       socket.onmessage = (event) => {
         void handleFrame(String(event.data));
@@ -230,18 +254,12 @@ export function useRoom(roomId: string): RoomApi {
             const payload = await decryptMessage(frame.c, keys.encKey, roomId);
             if (seenIds.has(payload.id)) return; // replay guard
             seenIds.add(payload.id);
+            const message: ReceivedMessage =
+              payload.re !== undefined
+                ? { id: payload.id, from: frame.from, text: payload.text, re: payload.re }
+                : { id: payload.id, from: frame.from, text: payload.text };
             setState((s) =>
-              s.status === "ended"
-                ? s
-                : {
-                    ...s,
-                    messages: [
-                      ...s.messages,
-                      payload.re !== undefined
-                        ? { id: payload.id, text: payload.text, re: payload.re }
-                        : { id: payload.id, text: payload.text },
-                    ],
-                  },
+              s.status === "ended" ? s : { ...s, messages: [...s.messages, message] },
             );
           } catch {
             // Undecryptable payload: drop it silently.
@@ -435,6 +453,17 @@ export function useRoom(roomId: string): RoomApi {
     return true;
   }
 
+  function lock(): void {
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !joinedRef.current) return;
+    // The server answers `locked` to everyone, or `err` with not_creator.
+    try {
+      socket.send(JSON.stringify({ type: "lock" }));
+    } catch {
+      // Socket closing; the room state will catch up on reconnect.
+    }
+  }
+
   function clearError(): void {
     setState((s) => (s.lastError === null ? s : { ...s, lastError: null }));
   }
@@ -443,5 +472,5 @@ export function useRoom(roomId: string): RoomApi {
     endChatRef.current?.();
   }
 
-  return { ...state, sendMessage, clearError, endChat, sentIds: sentIdsRef.current };
+  return { ...state, sendMessage, clearError, endChat, lock, sentIds: sentIdsRef.current };
 }

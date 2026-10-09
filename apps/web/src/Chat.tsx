@@ -25,6 +25,25 @@ export const MESSAGE_VISIBLE_MS = 0;
  * payloads carry `re`. Incoming replies to something *this screen* sent
  * render as a generic chip with no quoted text.
  */
+interface MessageGroup {
+  from: string;
+  messages: ReceivedMessage[];
+}
+
+/** Consecutive messages from the same sender label share one header. */
+function groupByLabel(messages: ReceivedMessage[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  for (const message of messages) {
+    const last = groups.at(-1);
+    if (last && last.from === message.from) {
+      last.messages.push(message);
+    } else {
+      groups.push({ from: message.from, messages: [message] });
+    }
+  }
+  return groups;
+}
+
 export function Chat({ room }: { room: RoomApi }) {
   const [draft, setDraft] = useState("");
   const [tickVisible, setTickVisible] = useState(false);
@@ -140,17 +159,24 @@ export function Chat({ room }: { room: RoomApi }) {
           ref={listRef}
           data-testid="messages"
         >
-          {room.messages.map((message) => (
-            <MessageItem
-              key={message.id}
-              room={room}
-              message={message}
-              selected={selectedId === message.id}
-              onSelect={onMessageClick}
-              onLongPressStart={beginLongPress}
-              onLongPressCancel={cancelLongPress}
-              onReply={chooseReply}
-            />
+          {groupByLabel(room.messages).map((group) => (
+            <section className="message-group" key={group.messages[0]!.id}>
+              <span className="message-label" data-testid="message-label">
+                {group.from}
+              </span>
+              {group.messages.map((message) => (
+                <MessageItem
+                  key={message.id}
+                  room={room}
+                  message={message}
+                  selected={selectedId === message.id}
+                  onSelect={onMessageClick}
+                  onLongPressStart={beginLongPress}
+                  onLongPressCancel={cancelLongPress}
+                  onReply={chooseReply}
+                />
+              ))}
+            </section>
           ))}
         </div>
         {hideContent && (

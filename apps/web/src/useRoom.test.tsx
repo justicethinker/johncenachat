@@ -517,6 +517,134 @@ describe("useRoom connection state machine", () => {
     expect(MockWebSocket.instances).toHaveLength(1);
   });
 
+  it("sends the group size from the link on join, and drops out-of-range sizes", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}?cap=3#${secret}`);
+    render(<Harness roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    expect((JSON.parse(socket.sent[0]!) as { cap?: number }).cap).toBe(3);
+    // Only the fragment is stripped; the query stays readable.
+    expect(window.location.search).toBe("?cap=3");
+    expect(window.location.hash).toBe("");
+
+    const tooBig = generateRoomId();
+    window.history.pushState(null, "", `/r/${tooBig}?cap=9#${secret}`);
+    render(<Harness roomId={tooBig} />);
+    await until(() => MockWebSocket.instances.length === 2);
+    const second = MockWebSocket.latest();
+    act(() => {
+      second.open();
+    });
+    await until(() => second.sent.length === 1);
+    expect(JSON.parse(second.sent[0]!)).not.toHaveProperty("cap");
+  });
+
+  it("keeps the server-stamped sender label on each received message", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const socket = await joinFlow(roomId, secret);
+    const { encKey } = await deriveKeys(secret);
+    const c = await encryptMessage(
+      { id: generateMessageId(), text: "from the group" },
+      encKey,
+      roomId,
+    );
+    act(() => {
+      socket.message({ type: "msg", from: "7351", c });
+    });
+    await until(() => harnessApi!.messages.length === 1);
+    expect(harnessApi!.messages[0]!.from).toBe("7351");
+    expect(harnessApi!.messages[0]!.text).toBe("from the group");
+  });
+
+  it("lets the creator lock the room, and the lock reaches everyone", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const socket = await joinFlow(roomId, secret);
+    expect(harnessApi!.isCreator).toBe(true);
+    expect(harnessApi!.locked).toBe(false);
+
+    act(() => {
+      harnessApi!.lock();
+    });
+    await until(() => socket.sent.length === 2);
+    expect(JSON.parse(socket.sent[1]!)).toEqual({ type: "lock" });
+
+    act(() => {
+      socket.message({ type: "locked" });
+    });
+    await until(() => harnessApi!.locked);
+  });
+
+  it("shows the lock control only to the creator, with the group count", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: ["0377"],
+        cap: 3,
+        locked: false,
+        isCreator: false,
+      });
+    });
+    await until(() => screen.queryByTestId("message-input") !== null);
+    expect(screen.queryByTestId("lock-room")).toBeNull();
+    expect(screen.queryByTestId("host-tag")).toBeNull();
+    expect(screen.getByTestId("members").textContent).toContain("2 of 3 here");
+    expect(screen.getAllByTestId("member").map((member) => member.textContent)).toEqual(["0377"]);
+  });
+
+  it("shows the creator a working lock button that reads Locked afterwards", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+      });
+    });
+    await until(() => screen.queryByTestId("lock-room") !== null);
+    expect(screen.getByTestId("host-tag").textContent).toBe("Host");
+
+    fireEvent.click(screen.getByTestId("lock-room"));
+    await until(() => socket.sent.length === 2);
+    expect(JSON.parse(socket.sent[1]!)).toEqual({ type: "lock" });
+
+    act(() => {
+      socket.message({ type: "locked" });
+    });
+    await until(() => screen.getByTestId("lock-room").textContent === "Locked");
+    expect((screen.getByTestId("lock-room") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("surfaces join errors as an ended state", async () => {
     const roomId = generateRoomId();
     const secret = generateSecret();

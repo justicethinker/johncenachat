@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Home } from "./Home";
 import { parseRoute } from "./router";
 
-const INVITE_RE = /^https?:\/\/[^/]+\/r\/[A-Za-z0-9_-]{11}#[A-Za-z0-9_-]{22}$/;
+const INVITE_RE = /^https?:\/\/[^/]+\/r\/[A-Za-z0-9_-]{11}\?cap=[2-8]#[A-Za-z0-9_-]{22}$/;
 
 afterEach(() => {
   cleanup();
@@ -35,6 +35,8 @@ describe("Home", () => {
 
     const url = new URL(link);
     expect(url.pathname).toMatch(/^\/r\/[A-Za-z0-9_-]{11}$/);
+    // The group size rides in the query; the secret stays in the fragment.
+    expect(url.searchParams.get("cap")).toBe("8");
     expect(url.hash).toMatch(/^#[A-Za-z0-9_-]{22}$/);
     // The current page URL must not contain the secret at all yet.
     expect(window.location.href).not.toContain(url.hash.slice(1));
@@ -50,6 +52,7 @@ describe("Home", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
 
     expect(window.location.pathname).toBe(url.pathname);
+    expect(window.location.search).toBe(url.search);
     expect(window.location.hash).toBe(url.hash);
     // Secret never appears outside the fragment.
     expect(window.location.pathname).not.toContain(secret);
@@ -59,6 +62,17 @@ describe("Home", () => {
       kind: "room",
       roomId: url.pathname.slice("/r/".length),
     });
+  });
+
+  it("lets the creator pick a group size, which goes into the link", () => {
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: "3" }));
+    expect(screen.getByRole("button", { name: "3" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "8" }).getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create chat" }));
+    const url = new URL(screen.getByTestId("invite-link").textContent ?? "");
+    expect(url.searchParams.get("cap")).toBe("3");
   });
 
   it("copies the full link to the clipboard", async () => {
@@ -93,7 +107,7 @@ describe("Home", () => {
 
     const status = await screen.findByRole("status");
     expect(status.textContent).toBe(
-      "The link is selected. Copy it, then share it privately with one person.",
+      "The link is selected. Copy it, then share it privately with the people you want here.",
     );
     expect(window.getSelection()?.toString()).toBe(link);
     expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();

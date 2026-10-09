@@ -20,6 +20,7 @@ function makeRoom(overrides: Partial<RoomApi> = {}): RoomApi {
     sendMessage: vi.fn(() => true),
     clearError: vi.fn(),
     endChat: vi.fn(),
+    lock: vi.fn(),
     sentIds: new Set<string>(),
     ...overrides,
   };
@@ -32,9 +33,27 @@ afterEach(() => {
   Reflect.deleteProperty(document, "hasFocus");
 });
 
+describe("sender labels", () => {
+  it("shows one label per run of messages from the same sender", () => {
+    const room = makeRoom({
+      messages: [
+        { id: "g1", from: "1111", text: "one" },
+        { id: "g2", from: "1111", text: "two" },
+        { id: "g3", from: "2222", text: "three" },
+        { id: "g4", from: "1111", text: "four" },
+      ],
+    });
+    render(<Chat room={room} />);
+
+    const labels = screen.getAllByTestId("message-label").map((element) => element.textContent);
+    expect(labels).toEqual(["1111", "2222", "1111"]);
+    expect(screen.getByTestId("messages").textContent).toBe("1111onetwo2222three1111four");
+  });
+});
+
 describe("reply", () => {
   it("clicking a received message reveals Reply; choosing it puts a quote chip in the composer", () => {
-    const room = makeRoom({ messages: [{ id: "r1", text: "the question" }] });
+    const room = makeRoom({ messages: [{ id: "r1", from: "0377", text: "the question" }] });
     render(<Chat room={room} />);
 
     fireEvent.click(screen.getByText("the question"));
@@ -53,7 +72,7 @@ describe("reply", () => {
   });
 
   it("the cancel button clears the reply before sending", () => {
-    const room = makeRoom({ messages: [{ id: "r1", text: "the question" }] });
+    const room = makeRoom({ messages: [{ id: "r1", from: "0377", text: "the question" }] });
     render(<Chat room={room} />);
 
     fireEvent.click(screen.getByText("the question"));
@@ -70,7 +89,7 @@ describe("reply", () => {
 
   it("long-pressing a received message reveals Reply", () => {
     vi.useFakeTimers();
-    const room = makeRoom({ messages: [{ id: "r1", text: "hold me" }] });
+    const room = makeRoom({ messages: [{ id: "r1", from: "0377", text: "hold me" }] });
     render(<Chat room={room} />);
 
     fireEvent.pointerDown(screen.getByText("hold me"));
@@ -95,7 +114,7 @@ describe("incoming reply rendering", () => {
     // sentIds holds ids of messages *we* sent (kept in memory only).
     const room = makeRoom({
       sentIds: new Set(["own1"]),
-      messages: [{ id: "m1", text: "the answer is four", re: "own1" }],
+      messages: [{ id: "m1", from: "0377", text: "the answer is four", re: "own1" }],
     });
     render(<Chat room={room} />);
 
@@ -104,15 +123,15 @@ describe("incoming reply rendering", () => {
     expect(screen.queryByTestId("reply-quote")).toBeNull();
     // Nothing else from that exchange is rendered: no quoted text anywhere.
     expect(screen.getByTestId("messages").textContent).toBe(
-      "replying to something you saidthe answer is four",
+      "0377replying to something you saidthe answer is four",
     );
   });
 
   it("re pointing to a received message shows the quoted text", () => {
     const room = makeRoom({
       messages: [
-        { id: "r1", text: "original question" },
-        { id: "r2", text: "here is my answer", re: "r1" },
+        { id: "r1", from: "0377", text: "original question" },
+        { id: "r2", from: "0377", text: "here is my answer", re: "r1" },
       ],
     });
     render(<Chat room={room} />);
@@ -126,7 +145,9 @@ describe("incoming reply rendering", () => {
   });
 
   it("re pointing at an unknown id never quotes text", () => {
-    const room = makeRoom({ messages: [{ id: "m1", text: "orphan reply", re: "mystery" }] });
+    const room = makeRoom({
+      messages: [{ id: "m1", from: "0377", text: "orphan reply", re: "mystery" }],
+    });
     render(<Chat room={room} />);
     expect(screen.getByTestId("reply-generic")).toBeTruthy();
     expect(screen.queryByTestId("reply-quote")).toBeNull();
@@ -135,7 +156,7 @@ describe("incoming reply rendering", () => {
 
 describe("privacy: blur behind Tap to reveal", () => {
   it("blurs the list when the tab becomes hidden and reveals on tap", () => {
-    const room = makeRoom({ messages: [{ id: "r1", text: "secret words" }] });
+    const room = makeRoom({ messages: [{ id: "r1", from: "0377", text: "secret words" }] });
     render(<Chat room={room} />);
     expect(screen.queryByTestId("tap-to-reveal")).toBeNull();
     expect(screen.getByTestId("messages").className).not.toContain("message-blurred");
@@ -155,7 +176,7 @@ describe("privacy: blur behind Tap to reveal", () => {
   });
 
   it("blurs the list when the window loses focus", () => {
-    const room = makeRoom({ messages: [{ id: "r1", text: "secret words" }] });
+    const room = makeRoom({ messages: [{ id: "r1", from: "0377", text: "secret words" }] });
     render(<Chat room={room} />);
 
     act(() => {

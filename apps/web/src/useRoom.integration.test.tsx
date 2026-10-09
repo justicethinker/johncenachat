@@ -198,6 +198,8 @@ describe("two tabs against the real relay", () => {
 
   it("shows only the other person's messages on each screen", async () => {
     const { containerA, containerB, b } = await openTwoTabs();
+    const aLabel = extractLabel(containerA);
+    const bLabel = extractLabel(containerB);
 
     // A sends: the input clears immediately and A never renders its own message.
     const inputA = within(containerA).getByTestId("message-input") as HTMLInputElement;
@@ -222,12 +224,13 @@ describe("two tabs against the real relay", () => {
     expect(within(containerB).queryByText("hi A, its B")).toBeNull();
 
     // One-sided streams: each screen contains exactly the other person's text.
-    expect(within(containerA).getByTestId("messages").textContent).toBe("hi A, its B");
-    expect(within(containerB).getByTestId("messages").textContent).toBe("hello from A");
+    // Each message sits under its sender's random label, never under our own.
+    expect(within(containerA).getByTestId("messages").textContent).toBe(`${bLabel}hi A, its B`);
+    expect(within(containerB).getByTestId("messages").textContent).toBe(`${aLabel}hello from A`);
 
-    // Identical styling for every message, no names or timestamps.
-    const messageA = within(containerA).getByTestId("messages").firstElementChild;
-    const messageB = within(containerB).getByTestId("messages").firstElementChild;
+    // Identical styling for every message; the only extra text is the sender label.
+    const messageA = within(containerA).getByTestId("messages").querySelector(".message");
+    const messageB = within(containerB).getByTestId("messages").querySelector(".message");
     expect(messageA?.className).toBe("message");
     expect(messageB?.className).toBe("message");
 

@@ -1,9 +1,13 @@
 import { useRef, useState } from "react";
-import { generateRoomId, generateSecret } from "@aside/protocol";
+import { MAX_PEERS, generateRoomId, generateSecret } from "@aside/protocol";
 import { navigate } from "./router";
+
+/** Group sizes the creator can pick. The server default is MAX_PEERS. */
+const SIZE_OPTIONS = Array.from({ length: MAX_PEERS - 1 }, (_, index) => index + 2);
 
 export function Home() {
   const [link, setLink] = useState<string | null>(null);
+  const [size, setSize] = useState<number>(MAX_PEERS);
   const [copied, setCopied] = useState(false);
   const [copyHelp, setCopyHelp] = useState("");
   const linkRef = useRef<HTMLDivElement | null>(null);
@@ -13,7 +17,8 @@ export function Home() {
   function createChat(): void {
     const roomId = generateRoomId();
     const secret = generateSecret();
-    setLink(`${window.location.origin}/r/${roomId}#${secret}`);
+    // The group size rides in the query so the fragment stays the secret alone.
+    setLink(`${window.location.origin}/r/${roomId}?cap=${size}#${secret}`);
     setCopied(false);
     setCopyHelp("");
   }
@@ -23,7 +28,7 @@ export function Home() {
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
-      setCopyHelp("Invite link copied. Share it privately with one person.");
+      setCopyHelp("Invite link copied. Share it privately with the people you want here.");
     } catch {
       const element = linkRef.current;
       if (element) {
@@ -34,7 +39,9 @@ export function Home() {
         selection?.addRange(range);
       }
       setCopied(false);
-      setCopyHelp("The link is selected. Copy it, then share it privately with one person.");
+      setCopyHelp(
+        "The link is selected. Copy it, then share it privately with the people you want here.",
+      );
     }
   }
 
@@ -48,7 +55,7 @@ export function Home() {
   function openChat(): void {
     if (!link) return;
     const url = new URL(link);
-    navigate(`${url.pathname}${url.hash}`);
+    navigate(`${url.pathname}${url.search}${url.hash}`);
   }
 
   return (
@@ -58,7 +65,7 @@ export function Home() {
           <a className="wordmark" href="/" aria-label="Aside home">
             Aside<span aria-hidden="true">.</span>
           </a>
-          <span className="brand-note">Private chat for two</span>
+          <span className="brand-note">Private chat for small groups</span>
         </header>
 
         <section className="hero" aria-labelledby="home-title">
@@ -79,15 +86,36 @@ export function Home() {
 
             {link === null ? (
               <div className="create-panel">
+                <fieldset className="size-picker">
+                  <legend className="size-legend">How many people can join?</legend>
+                  <div className="size-options">
+                    {SIZE_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={option === size ? "size-option size-option-on" : "size-option"}
+                        aria-pressed={option === size}
+                        onClick={() => setSize(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
                 <button type="button" className="btn btn-primary" onClick={createChat}>
                   Create chat
                 </button>
-                <p className="action-note">Make a private link to share with one person.</p>
+                <p className="action-note">
+                  Make a private link. You are the host and can lock the room once everyone is in.
+                </p>
               </div>
             ) : (
               <div className="link-card">
                 <p className="invite-title">Your invite link</p>
-                <p className="hint">Share the full link privately. The part after # is the key.</p>
+                <p className="hint">
+                  Share the full link privately. The part after # is the key. Whoever opens it first
+                  becomes the host.
+                </p>
                 <div
                   className="link-box"
                   ref={linkRef}
@@ -153,7 +181,7 @@ export function Home() {
             <ul className="notice-list notice-yes">
               <li>Your messages are unreadable to the relay.</li>
               <li>No account and no saved chat history.</li>
-              <li>The room closes when either person leaves.</li>
+              <li>The room closes when the host leaves.</li>
             </ul>
           </div>
           <div className="notice-col notice-limits">

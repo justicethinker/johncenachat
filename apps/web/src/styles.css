@@ -455,6 +455,8 @@ input,
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .btn-quiet {
@@ -534,6 +536,106 @@ input,
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 4px 0 12px;
+}
+
+.size-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 14px;
+  min-width: 0;
+}
+
+.size-legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.size-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.size-option {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.size-option-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.host-tag {
+  font-size: 0.75rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.lock-room:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.members-count {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.member-on {
+  color: var(--text);
+  border-color: var(--good);
+}
+
+.message-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-label {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding-left: 4px;
 }
 
 .message {

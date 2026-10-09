@@ -45,8 +45,11 @@ function haystack(sink: Wire): string {
 }
 
 /** Create a chat from the home screen and return the invite link. */
-async function createChat(page: Page): Promise<string> {
+async function createChat(page: Page, size?: number): Promise<string> {
   await page.goto("/");
+  if (size !== undefined) {
+    await page.getByRole("button", { name: String(size), exact: true }).click();
+  }
   await page.getByRole("button", { name: "Create chat" }).click();
   const link = (await page.getByTestId("invite-link").innerText()).trim();
   await page.getByRole("button", { name: "Open chat" }).click();
@@ -164,7 +167,8 @@ test("a third context opening the same link gets room full", async ({ browser })
   const b = await contextB.newPage();
 
   try {
-    const link = await createChat(a);
+    // A two-person room: the third person must be turned away by the size cap.
+    const link = await createChat(a, 2);
     await joinRoom(b, link);
     await waitActive(a);
     await waitActive(b);
@@ -198,11 +202,13 @@ test("closing one context ends the other person's chat", async ({ browser }) => 
     await send(a, `hello-${Date.now()}`);
     await expect(b.getByTestId("messages")).not.toHaveCount(0);
 
+    // A created the room, so A leaving closes it for everyone.
     await contextA.close();
 
-    await expect(b.getByTestId("ended")).toHaveText("The other person left. This chat is closed.", {
-      timeout: 45_000,
-    });
+    await expect(b.getByTestId("ended")).toHaveText(
+      "The person who created this chat left. This chat is closed.",
+      { timeout: 45_000 },
+    );
   } finally {
     await contextB.close();
   }

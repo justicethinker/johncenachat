@@ -27,6 +27,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   too_large: "That message is too large.",
   bad_format: "The server rejected a message.",
   room_full: "This chat is full.",
+  room_locked: "The host locked this chat.",
+  not_creator: "Only the host can do that.",
   bad_auth: "This link does not match this chat.",
   bad_room: "This link is not valid.",
   blocked: "Blocked.",
@@ -76,6 +78,9 @@ export function Room({ roomId }: { roomId: string }) {
     );
   }
 
+  // Our own label counts as present once we have joined.
+  const presentCount = 1 + room.members.filter((member) => member.present).length;
+
   return (
     <main className="page page-chat">
       <div className="chat">
@@ -83,13 +88,27 @@ export function Room({ roomId }: { roomId: string }) {
           <span className="you-are" data-testid="label">
             {room.label ? `You are ${room.label}` : "Connecting…"}
           </span>
+          {room.isCreator && (
+            <span className="host-tag" data-testid="host-tag">
+              Host
+            </span>
+          )}
           <span className="header-side">
+            {room.isCreator && (
+              <button
+                type="button"
+                className="btn btn-quiet lock-room"
+                data-testid="lock-room"
+                onClick={room.lock}
+                disabled={room.locked}
+              >
+                {room.locked ? "Locked" : "Lock room"}
+              </button>
+            )}
             <span
               className={room.peerPresent ? "presence presence-on" : "presence presence-off"}
               data-testid="presence"
-              aria-label={
-                room.peerPresent ? "The other person is here" : "The other person is not connected"
-              }
+              aria-label={room.peerPresent ? "Someone else is here" : "No one else is connected"}
             />
             <button
               type="button"
@@ -102,6 +121,27 @@ export function Room({ roomId }: { roomId: string }) {
           </span>
         </header>
 
+        {room.label && (
+          <div className="members" data-testid="members">
+            <p className="members-count">
+              {presentCount} of {room.cap} here{room.locked ? " · locked" : ""}
+            </p>
+            {room.members.length > 0 && (
+              <ul className="member-list" aria-label="Others in this chat">
+                {room.members.map((member) => (
+                  <li
+                    key={member.label}
+                    className={member.present ? "member member-on" : "member member-off"}
+                    data-testid="member"
+                  >
+                    {member.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="chat-body">
           {room.status === "connecting" && (
             <p className="status-line" data-testid="connecting">
@@ -110,7 +150,7 @@ export function Room({ roomId }: { roomId: string }) {
           )}
           {room.status === "waiting" && (
             <p className="status-line" data-testid="waiting">
-              Waiting for the other person to open the link…
+              Waiting for people to open the link…
             </p>
           )}
           <Chat room={room} />
