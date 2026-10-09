@@ -14,8 +14,15 @@ describe("Home", () => {
   it("starts with a single Create chat action and the honest notice", () => {
     render(<Home />);
     expect(screen.getByRole("button", { name: "Create chat" })).toBeTruthy();
-    expect(screen.getByText("What this protects")).toBeTruthy();
-    expect(screen.getByText("What this does not protect")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "A conversation without a transcript." }),
+    ).toBeTruthy();
+    expect(screen.getByText("What it protects")).toBeTruthy();
+    expect(screen.getByText("What it can’t protect")).toBeTruthy();
+    expect(screen.getByText("One-sided by design")).toBeTruthy();
+    expect(
+      screen.getByText("A quieter place to talk. Not a way to control what someone else keeps."),
+    ).toBeTruthy();
     expect(screen.queryByTestId("invite-link")).toBeNull();
   });
 
@@ -71,6 +78,25 @@ describe("Home", () => {
       expect(writeText).toHaveBeenCalledWith(link);
       expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
     });
+  });
+
+  it("selects the invite and explains the manual copy fallback when clipboard access is unavailable", async () => {
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: "Create chat" }));
+    const link = screen.getByTestId("invite-link").textContent ?? "";
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe(
+      "The link is selected. Copy it, then share it privately with one person.",
+    );
+    expect(window.getSelection()?.toString()).toBe(link);
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
   });
 
   it("shows Share only when navigator.share exists", () => {

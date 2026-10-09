@@ -65,18 +65,26 @@ then `cd deploy && docker compose up -d --build` and inspect with `curl -sk -D -
   is the browser's own view of what left the tab — equivalent to the network
   tab.
 
-## 5. Server holds no room data after rooms close — PASS
+## 5. Server holds no room data after rooms close — PASS (with a stated caveat)
 
-- `apps/server/src/integration.test.ts:241` — "holds no rooms in memory after
+- `apps/server/src/integration.test.ts` — "holds no rooms in memory after
   everyone has left" (real server, two `ws` clients).
-- `apps/server/src/manager.test.ts:419` — "leaves no rooms behind once
+- `apps/server/src/manager.test.ts` — "leaves no rooms behind once
   everyone is gone" (unit level, injected clock).
-- All 32 server tests pass (`pnpm test`). Rooms are a `Map<roomId, Room>` in
+- All 37 server tests pass (`pnpm test`). Rooms are a `Map<roomId, Room>` in
   process memory; there is no file, database, or cache dependency anywhere in
   `apps/server` (dependencies: `ws` + `@aside/protocol` only), so nothing can
   persist.
 - e2e test 4 confirms the destroy path end to end: closing context A ends B's
   chat with `peer_left`.
+- **Caveat (flagged, intentional):** destroyed rooms leave a _tombstone_ —
+  `{roomId, SHA-256(auth token), close reason}` — so a reused link is refused
+  (`closed{reason}`) instead of silently opening a new room (`manager.ts`,
+  `MAX_DEAD_ROOMS = 20_000`, oldest evicted first). It stores no messages,
+  labels, peer ids, IPs or timestamps, is process-memory only, and cannot be
+  reversed into the token. Tests: `manager.test.ts` "RoomManager dead links"
+  (4 tests) and `integration.test.ts` "keeps a closed room's link dead".
+  This is documented in PRIVACY.md "What is stored, and for how long".
 
 ## 6. CSP, referrer policy, and cache headers present — PASS
 
@@ -113,15 +121,15 @@ none ships to users or runs in production containers.
 
 ## Summary
 
-| #   | Item                                | Result |
-| --- | ----------------------------------- | ------ |
-| 1   | No `console.*` logging of room data | PASS   |
-| 2   | No browser storage APIs             | PASS   |
-| 3   | No third-party requests             | PASS   |
-| 4   | Fragment never on the wire          | PASS   |
-| 5   | No room data after close            | PASS   |
-| 6   | CSP / referrer / cache headers      | PASS   |
-| 7   | Minimal, justified dependencies     | PASS   |
+| #   | Item                                  | Result |
+| --- | ------------------------------------- | ------ |
+| 1   | No `console.*` logging of room data   | PASS   |
+| 2   | No browser storage APIs               | PASS   |
+| 3   | No third-party requests               | PASS   |
+| 4   | Fragment never on the wire            | PASS   |
+| 5   | No room data after close (see caveat) | PASS   |
+| 6   | CSP / referrer / cache headers        | PASS   |
+| 7   | Minimal, justified dependencies       | PASS   |
 
 **Flagged limitations (not failures, but honest caveats):**
 

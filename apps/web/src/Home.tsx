@@ -2,14 +2,10 @@ import { useRef, useState } from "react";
 import { generateRoomId, generateSecret } from "@aside/protocol";
 import { navigate } from "./router";
 
-/**
- * Home: one button, **Create chat**. Generates roomId + secret locally,
- * builds /r/{roomId}#{secret}, shows Copy and Share. The secret only ever
- * exists in the URL fragment and in memory.
- */
 export function Home() {
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyHelp, setCopyHelp] = useState("");
   const linkRef = useRef<HTMLDivElement | null>(null);
 
   const shareSupported = typeof navigator.share === "function";
@@ -19,6 +15,7 @@ export function Home() {
     const secret = generateSecret();
     setLink(`${window.location.origin}/r/${roomId}#${secret}`);
     setCopied(false);
+    setCopyHelp("");
   }
 
   async function copy(): Promise<void> {
@@ -26,8 +23,8 @@ export function Home() {
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
+      setCopyHelp("Invite link copied. Share it privately with one person.");
     } catch {
-      // Clipboard unavailable: select the visible link so it can be copied by hand.
       const element = linkRef.current;
       if (element) {
         const range = document.createRange();
@@ -36,13 +33,15 @@ export function Home() {
         selection?.removeAllRanges();
         selection?.addRange(range);
       }
+      setCopied(false);
+      setCopyHelp("The link is selected. Copy it, then share it privately with one person.");
     }
   }
 
   function share(): void {
     if (!link || typeof navigator.share !== "function") return;
     void navigator.share({ url: link }).catch(() => {
-      // User cancelled or sharing failed; nothing to do.
+      // Cancellation is intentional; the invite remains available to copy.
     });
   }
 
@@ -53,67 +52,123 @@ export function Home() {
   }
 
   return (
-    <main className="page">
+    <main className="page page-home">
       <div className="home">
-        <h1 className="title">Aside</h1>
-        <p className="tagline">A private chat for two. Nothing is stored.</p>
+        <header className="brand-line">
+          <a className="wordmark" href="/" aria-label="Aside home">
+            Aside<span aria-hidden="true">.</span>
+          </a>
+          <span className="brand-note">Private chat for two</span>
+        </header>
 
-        {link === null ? (
-          <div className="actions">
-            <button type="button" className="btn btn-primary" onClick={createChat}>
-              Create chat
-            </button>
-          </div>
-        ) : (
-          <div className="link-card">
-            <p className="hint">Send this link to the one other person:</p>
-            <div className="link-box" ref={linkRef} data-testid="invite-link">
-              {link}
-            </div>
-            <div className="actions">
-              <button type="button" className="btn btn-primary" onClick={() => void copy()}>
-                {copied ? "Copied" : "Copy link"}
-              </button>
-              {shareSupported && (
-                <button type="button" className="btn" onClick={share}>
-                  Share
+        <section className="hero" aria-labelledby="home-title">
+          <div className="hero-copy">
+            <p className="eyebrow">
+              <span className="signal-dot" aria-hidden="true" />
+              No account. No saved history.
+            </p>
+            <h1 className="title" id="home-title">
+              A conversation
+              <br />
+              without a <em>transcript.</em>
+            </h1>
+            <p className="tagline">
+              Messages are encrypted in your browser. The relay passes them along, but never saves a
+              chat history.
+            </p>
+
+            {link === null ? (
+              <div className="create-panel">
+                <button type="button" className="btn btn-primary" onClick={createChat}>
+                  Create chat
                 </button>
-              )}
-              <button type="button" className="btn" onClick={openChat}>
-                Open chat
-              </button>
-            </div>
+                <p className="action-note">Make a private link to share with one person.</p>
+              </div>
+            ) : (
+              <div className="link-card">
+                <p className="invite-title">Your invite link</p>
+                <p className="hint">Share the full link privately. The part after # is the key.</p>
+                <div
+                  className="link-box"
+                  ref={linkRef}
+                  data-testid="invite-link"
+                  role="textbox"
+                  aria-label="Private chat invite link"
+                  aria-readonly="true"
+                  tabIndex={0}
+                >
+                  {link}
+                </div>
+                <div className="actions">
+                  <button type="button" className="btn btn-primary" onClick={() => void copy()}>
+                    {copied ? "Copied" : "Copy link"}
+                  </button>
+                  {shareSupported && (
+                    <button type="button" className="btn" onClick={share}>
+                      Share
+                    </button>
+                  )}
+                  <button type="button" className="btn" onClick={openChat}>
+                    Open chat
+                  </button>
+                </div>
+                <p className="copy-feedback" role="status" aria-live="polite">
+                  {copyHelp}
+                </p>
+              </div>
+            )}
           </div>
-        )}
 
-        <section className="notice">
-          <h2>What this protects</h2>
-          <ul>
-            <li>
-              Messages are encrypted in your browser. The server only relays ciphertext it cannot
-              read.
-            </li>
-            <li>Nothing is stored. When either person leaves, the room is destroyed.</li>
-            <li>
-              Each screen shows only the other person&apos;s messages, so a screenshot proves
-              nothing about who said what.
-            </li>
-          </ul>
-          <h2>What this does not protect</h2>
-          <ul>
-            <li>
-              The other person can still screenshot, copy, retype or remember what you send them.
-            </li>
-            <li>
-              The link is the only secret. Anyone who gets it before your friend joins can take that
-              seat.
-            </li>
-            <li>
-              Sending the link over WhatsApp is itself a record that you invited them. Share it by
-              voice or in a disappearing chat if that matters.
-            </li>
-          </ul>
+          <aside
+            className="exchange"
+            aria-label="Only the other person’s messages appear on your screen"
+          >
+            <div className="exchange-heading">
+              <span>One-sided by design</span>
+              <span className="exchange-mark" aria-hidden="true">
+                ↗
+              </span>
+            </div>
+            <div className="exchange-panes">
+              <div className="exchange-pane">
+                <span className="pane-label">On your screen</span>
+                <p className="pane-message">Only what they send.</p>
+                <span className="pane-note">Your own messages aren’t shown.</span>
+              </div>
+              <div className="exchange-connector" aria-hidden="true">
+                <span />
+              </div>
+              <div className="exchange-pane exchange-pane-other">
+                <span className="pane-label">On their screen</span>
+                <p className="pane-message">Only what you send.</p>
+                <span className="pane-note">No names attached.</span>
+              </div>
+            </div>
+          </aside>
         </section>
+
+        <section className="notice" aria-label="What to expect">
+          <div className="notice-col">
+            <h2 className="notice-title">What it protects</h2>
+            <ul className="notice-list notice-yes">
+              <li>Your messages are unreadable to the relay.</li>
+              <li>No account and no saved chat history.</li>
+              <li>The room closes when either person leaves.</li>
+            </ul>
+          </div>
+          <div className="notice-col notice-limits">
+            <h2 className="notice-title">What it can’t protect</h2>
+            <ul className="notice-list notice-no">
+              <li>The other person can still save or remember your words.</li>
+              <li>The full invite link is the key. Share it only with the person you intend.</li>
+              <li>The app you use to send the link may keep a record of that message.</li>
+            </ul>
+          </div>
+        </section>
+
+        <p className="home-footnote">
+          A quieter place to talk. Not a way to control what someone else keeps.
+        </p>
       </div>
     </main>
   );

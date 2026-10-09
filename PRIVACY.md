@@ -23,15 +23,25 @@ This is the plain-language version. No crypto jargon required.
 - **Message sizes and timing** — how many frames, how big, how often. Ciphertext
   length is partly controlled by padding, but timing is not hidden.
 - **A hash of your link token** (one-way), used only to check that the second
-  person holds the same link. It cannot be reversed into the token.
+  person holds the same link. It cannot be reversed into the token. After the
+  room closes, the same hash is kept in memory for a while so the old link
+  stays dead instead of silently opening a new chat.
 
 ## What is stored, and for how long
 
 Nothing is written to disk. Rooms exist in the server's memory and are destroyed
 when either person leaves, after 10 minutes of silence, after 30 minutes waiting
-for the second person, or after 6 hours at the absolute most. The server process
-holds no room data once a room is destroyed. Caddy (the web server in front) has
-access logging disabled, so it produces no request logs either.
+for the second person, or after 6 hours at the absolute most.
+
+Once a room is destroyed, the server keeps only a tiny _tombstone_ in memory: the
+room ID, the one-way hash of the link token, and why the room closed — nothing
+else. It exists for one reason: so that reopening an old link tells you the chat
+is over rather than quietly starting a fresh room. It holds no messages, no
+labels, no addresses, and no times. Tombstones are capped at 20,000 entries (the
+oldest are dropped first), so memory stays bounded at a few megabytes even after
+millions of chats; an ancient link whose tombstone was evicted would behave like
+a brand-new link. Caddy (the web server in front) has access logging disabled, so
+it produces no request logs either.
 
 ## What this does not protect against
 
