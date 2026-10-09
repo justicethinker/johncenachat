@@ -3,17 +3,23 @@ import { navigate } from "./router";
 import { type EndReason, useRoom } from "./useRoom";
 
 const END_MESSAGES: Record<EndReason, string> = {
+  left: "You ended this chat.",
   peer_left: "The other person left. This chat is closed.",
+  creator_left: "The person who created this chat left. This chat is closed.",
   idle: "This chat closed because nobody was talking.",
   expired: "This chat reached its time limit and was closed.",
   waiting_timeout: "Nobody joined in time, so this chat was closed.",
   reconnect_failed: "The connection was lost and could not be restored. This chat is closed.",
-  room_full: "This chat already has two people in it.",
+  room_full: "This room is full or closed.",
   bad_auth: "This link does not match this chat.",
   bad_room: "This link is not valid.",
   bad_format: "Something went wrong. Reopen the link from the start.",
   rate_limited: "Too many attempts. Try again in a minute.",
   too_large: "That message was too large to send.",
+  room_locked: "This room is full or closed.",
+  bad_cap: "That room link is not valid.",
+  closed_by_creator: "The host closed this chat.",
+  not_creator: "Only the host can do that.",
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -77,13 +83,23 @@ export function Room({ roomId }: { roomId: string }) {
           <span className="you-are" data-testid="label">
             {room.label ? `You are ${room.label}` : "Connecting…"}
           </span>
-          <span
-            className={room.peerPresent ? "presence presence-on" : "presence presence-off"}
-            data-testid="presence"
-            aria-label={
-              room.peerPresent ? "The other person is here" : "The other person is not connected"
-            }
-          />
+          <span className="header-side">
+            <span
+              className={room.peerPresent ? "presence presence-on" : "presence presence-off"}
+              data-testid="presence"
+              aria-label={
+                room.peerPresent ? "The other person is here" : "The other person is not connected"
+              }
+            />
+            <button
+              type="button"
+              className="btn btn-quiet end-chat"
+              data-testid="end-chat"
+              onClick={room.endChat}
+            >
+              End chat
+            </button>
+          </span>
         </header>
 
         <div className="chat-body">

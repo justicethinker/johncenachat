@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bytesToBase64Url } from "./base64.js";
-import { MAX_FRAME_BYTES } from "./constants.js";
+import { MAX_PEERS, MAX_FRAME_BYTES } from "./constants.js";
 import { parseClientFrame, parseServerFrame } from "./frames.js";
 import { generatePeerId } from "./random.js";
 
@@ -21,17 +21,98 @@ describe("parseClientFrame", () => {
     });
   });
 
-  it("accepts a valid msg and leave", () => {
+  it("accepts a join with a valid cap", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: 4 }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: 4,
+    });
+  });
+
+  it("accepts a join with cap at the extremes", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: 2 }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: 2,
+    });
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: MAX_PEERS }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: MAX_PEERS,
+    });
+  });
+
+  it("accepts msg, lock, close and leave frames", () => {
     expect(parseClientFrame(json({ type: "msg", n: 1, c: CIPHER }))).toEqual({
       type: "msg",
       n: 1,
       c: CIPHER,
     });
+    expect(parseClientFrame(json({ type: "lock" }))).toEqual({
+      type: "lock",
+    });
+    expect(parseClientFrame(json({ type: "close" }))).toEqual({ type: "close" });
     expect(parseClientFrame(json({ type: "leave" }))).toEqual({ type: "leave" });
   });
 
   it("accepts n = 0", () => {
     expect(parseClientFrame(json({ type: "msg", n: 0, c: CIPHER }))).not.toBeNull();
+  });
+
+  it("rejects a client-provided from on join", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, from: "4821" }))).toBeNull();
+  });
+
+  it("preserves numeric cap values for the manager to return bad_cap or ignore", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: 1 }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: 1,
+    });
+    expect(
+      parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: MAX_PEERS + 1 })),
+    ).toEqual({ type: "join", auth: AUTH, peerId, cap: MAX_PEERS + 1 });
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: 3.5 }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: 3.5,
+    });
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: -2 }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      cap: -2,
+    });
+  });
+
+  it("rejects non-numeric cap values", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: "4" }))).toBeNull();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: null }))).toBeNull();
+  });
+
+  it("rejects a cap with a smuggled extra field", () => {
+    const peerId = generatePeerId();
+    expect(
+      parseClientFrame(
+        json({
+          type: "join",
+          auth: AUTH,
+          peerId,
+          cap: 4,
+          extra: 1,
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("rejects malformed joins", () => {
@@ -41,7 +122,14 @@ describe("parseClientFrame", () => {
     ).toBeNull();
     expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId: "nope" }))).toBeNull();
     expect(
-      parseClientFrame(json({ type: "join", auth: AUTH, peerId: generatePeerId(), extra: 1 })),
+      parseClientFrame(
+        json({
+          type: "join",
+          auth: AUTH,
+          peerId: generatePeerId(),
+          extra: 1,
+        }),
+      ),
     ).toBeNull(); // smuggled field
   });
 
@@ -66,49 +154,203 @@ describe("parseClientFrame", () => {
 });
 
 describe("parseServerFrame", () => {
-  it("accepts joined with and without peerLabel", () => {
-    expect(parseServerFrame(json({ type: "joined", label: "4821", peers: 1 }))).toEqual({
+  it("accepts joined with required group state", () => {
+    expect(
+      parseServerFrame(
+        json({
+          type: "joined",
+          label: "4821",
+          members: [],
+          cap: 8,
+          locked: false,
+          isCreator: true,
+        }),
+      ),
+    ).toEqual({
       type: "joined",
       label: "4821",
-      peers: 1,
+      members: [],
+      cap: 8,
+      locked: false,
+      isCreator: true,
     });
-    expect(
-      parseServerFrame(json({ type: "joined", label: "4821", peerLabel: "0377", peers: 2 })),
-    ).toEqual({ type: "joined", label: "4821", peerLabel: "0377", peers: 2 });
   });
 
-  it("accepts peer, msg, ack, closed and err", () => {
-    expect(parseServerFrame(json({ type: "peer", state: "joined", peerLabel: "0377" }))).toEqual({
+  it("accepts joined with members, cap, locked and isCreator", () => {
+    expect(
+      parseServerFrame(
+        json({
+          type: "joined",
+          label: "4821",
+          members: ["0377", "2201"],
+          cap: 4,
+          locked: true,
+          isCreator: true,
+        }),
+      ),
+    ).toEqual({
+      type: "joined",
+      label: "4821",
+      members: ["0377", "2201"],
+      cap: 4,
+      locked: true,
+      isCreator: true,
+    });
+  });
+
+  it("rejects joined with a cap outside 2..MAX_PEERS", () => {
+    const frame = { type: "joined", label: "4821", members: [], locked: false, isCreator: false };
+    expect(parseServerFrame(json({ ...frame, cap: 1 }))).toBeNull();
+    expect(parseServerFrame(json({ ...frame, cap: MAX_PEERS + 1 }))).toBeNull();
+  });
+
+  it("accepts peer with count", () => {
+    expect(
+      parseServerFrame(json({ type: "peer", state: "joined", label: "0377", count: 3 })),
+    ).toEqual({
       type: "peer",
       state: "joined",
-      peerLabel: "0377",
+      label: "0377",
+      count: 3,
     });
-    expect(parseServerFrame(json({ type: "peer", state: "away" }))).toEqual({
-      type: "peer",
-      state: "away",
+    expect(
+      parseServerFrame(json({ type: "peer", state: "away", label: "0377", count: 1 })),
+    ).toEqual({ type: "peer", state: "away", label: "0377", count: 1 });
+  });
+
+  it("accepts msg with a server-stamped from label", () => {
+    expect(parseServerFrame(json({ type: "msg", from: "4821", c: CIPHER }))).toEqual({
+      type: "msg",
+      from: "4821",
+      c: CIPHER,
     });
-    expect(parseServerFrame(json({ type: "msg", c: CIPHER }))).toEqual({ type: "msg", c: CIPHER });
+  });
+
+  it("rejects msg without from", () => {
+    expect(parseServerFrame(json({ type: "msg", c: CIPHER }))).toBeNull();
+  });
+
+  it("rejects msg with a bad from label", () => {
+    expect(parseServerFrame(json({ type: "msg", from: "48a1", c: CIPHER }))).toBeNull();
+    expect(parseServerFrame(json({ type: "msg", from: "482", c: CIPHER }))).toBeNull();
+  });
+
+  it("accepts ack, locked, all close reasons and group error codes", () => {
     expect(parseServerFrame(json({ type: "ack", n: 3 }))).toEqual({ type: "ack", n: 3 });
+    expect(parseServerFrame(json({ type: "locked" }))).toEqual({
+      type: "locked",
+    });
     expect(parseServerFrame(json({ type: "closed", reason: "peer_left" }))).toEqual({
       type: "closed",
       reason: "peer_left",
+    });
+    expect(parseServerFrame(json({ type: "closed", reason: "creator_left" }))).toEqual({
+      type: "closed",
+      reason: "creator_left",
+    });
+    expect(parseServerFrame(json({ type: "closed", reason: "closed_by_creator" }))).toEqual({
+      type: "closed",
+      reason: "closed_by_creator",
     });
     expect(parseServerFrame(json({ type: "err", code: "room_full" }))).toEqual({
       type: "err",
       code: "room_full",
     });
+    expect(parseServerFrame(json({ type: "err", code: "room_locked" }))).toEqual({
+      type: "err",
+      code: "room_locked",
+    });
+    expect(parseServerFrame(json({ type: "err", code: "bad_cap" }))).toEqual({
+      type: "err",
+      code: "bad_cap",
+    });
+    expect(parseServerFrame(json({ type: "err", code: "not_creator" }))).toEqual({
+      type: "err",
+      code: "not_creator",
+    });
   });
 
-  it("rejects malformed labels, reasons and codes", () => {
-    expect(parseServerFrame(json({ type: "joined", label: "482", peers: 1 }))).toBeNull();
-    expect(parseServerFrame(json({ type: "joined", label: "48a1", peers: 1 }))).toBeNull();
-    expect(parseServerFrame(json({ type: "joined", label: "4821", peers: 0 }))).toBeNull();
-    expect(parseServerFrame(json({ type: "joined", label: "4821", peers: 3 }))).toBeNull();
-    expect(parseServerFrame(json({ type: "peer", state: "gone" }))).toBeNull();
+  it("rejects malformed labels, reasons, fields and codes", () => {
+    const validJoined = {
+      type: "joined",
+      label: "4821",
+      members: [],
+      cap: 2,
+      locked: false,
+      isCreator: false,
+    };
+    expect(parseServerFrame(json({ ...validJoined, label: "482" }))).toBeNull();
+    expect(parseServerFrame(json({ ...validJoined, label: "48a1" }))).toBeNull();
+    expect(parseServerFrame(json({ ...validJoined, extra: true }))).toBeNull();
+    expect(
+      parseServerFrame(json({ type: "peer", state: "gone", label: "0377", count: 1 })),
+    ).toBeNull();
+    expect(parseServerFrame(json({ type: "peer", state: "joined", label: "0377" }))).toBeNull();
     expect(parseServerFrame(json({ type: "closed", reason: "because" }))).toBeNull();
+    expect(parseServerFrame(json({ type: "closed", reason: "creator_left", extra: 1 }))).toBeNull();
     expect(parseServerFrame(json({ type: "err", code: "mystery" }))).toBeNull();
     expect(parseServerFrame(json({ type: "ack", n: 1, ts: 99 }))).toBeNull();
     expect(parseServerFrame("{nope")).toBeNull();
     expect(parseServerFrame(json({ type: "unknown" }))).toBeNull();
+  });
+
+  it("rejects peer with count above MAX_PEERS", () => {
+    expect(
+      parseServerFrame(
+        json({ type: "peer", state: "joined", label: "0377", count: MAX_PEERS + 1 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects joined with bad members", () => {
+    expect(
+      parseServerFrame(
+        json({
+          type: "joined",
+          label: "4821",
+          members: ["4821", "bad"],
+          cap: 2,
+          locked: false,
+          isCreator: false,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseServerFrame(
+        json({
+          type: "joined",
+          label: "4821",
+          members: "not-array",
+          cap: 2,
+          locked: false,
+          isCreator: false,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts false for the joined locked flag and rejects wrong types", () => {
+    expect(
+      parseServerFrame(
+        json({
+          type: "joined",
+          label: "4821",
+          members: [],
+          cap: 2,
+          locked: false,
+          isCreator: false,
+        }),
+      ),
+    ).not.toBeNull();
+    expect(
+      parseServerFrame(
+        json({ type: "joined", label: "4821", members: [], cap: 2, locked: 1, isCreator: false }),
+      ),
+    ).toBeNull();
+    expect(
+      parseServerFrame(
+        json({ type: "joined", label: "4821", members: [], cap: 2, locked: true, isCreator: 1 }),
+      ),
+    ).toBeNull();
   });
 });

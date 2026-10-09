@@ -1,7 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  CREATOR_GRACE_MS,
   IDLE_TIMEOUT_MS,
+  MAX_DEAD_ROOMS,
   MAX_FRAME_BYTES,
+  MAX_PEERS,
   MAX_ROOMS,
   MAX_ROOM_AGE_MS,
   MSG_RATE_BURST,
@@ -9,6 +12,7 @@ import {
   RECONNECT_GRACE_MS,
   ROOM_CREATE_LIMIT_PER_IP,
   ROOM_CREATE_WINDOW_MS,
+  ROOM_FANOUT_RATE_PER_SECOND,
   WAITING_TIMEOUT_MS,
   generateLabel,
   isValidPeerId,
@@ -22,10 +26,7 @@ import {
 import { type Clock, systemClock } from "./clock.js";
 import { TokenBucket, WindowCounter } from "./rateLimit.js";
 
-/**
- * The relay. Holds rooms in process memory only, forwards opaque ciphertext
- * to the *other* peer, and never parses, logs or stores it (spec section 7).
- */
+/** The relay forwards ciphertext, and never parses, logs or stores it. */
 export interface Connection {
   send(frame: ServerFrame): void;
   close(): void;
@@ -41,18 +42,32 @@ interface Peer {
 
 interface Room {
   id: string;
-  /** SHA-256 of the first joiner's authToken; later joiners must match. */
   authHash: Buffer;
   peers: Map<string, Peer>;
+  /** Kept for the room lifetime, so departed labels are never reused. */
+  usedLabels: Set<string>;
+  creatorPeerId: string;
+  cap: number;
+  locked: boolean;
   createdAt: number;
   lastActivity: number;
+  hadMultipleConnected: boolean;
+  singletonSince: number | null;
+  fanout: TokenBucket;
 }
 
-export type JoinResult = { ok: true; label: string } | { ok: false; code: ErrorCode };
+interface DeadRoom {
+  authHash: Buffer;
+  reason: CloseReason;
+}
+
+export type JoinResult =
+  { ok: true; label: string } | { ok: false; code: ErrorCode } | { ok: false; closed: CloseReason };
 
 export interface RoomManagerOptions {
   clock?: Clock;
   maxRooms?: number;
+  maxDeadRooms?: number;
 }
 
 function hashAuth(auth: string): Buffer {
@@ -63,15 +78,24 @@ function safeEqual(a: Buffer, b: Buffer): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function connectedCount(room: Room): number {
+  let count = 0;
+  for (const peer of room.peers.values()) if (peer.socket !== null) count += 1;
+  return count;
+}
+
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
+  private readonly deadRooms = new Map<string, DeadRoom>();
   private readonly clock: Clock;
   private readonly maxRooms: number;
+  private readonly maxDeadRooms: number;
   private readonly createLimiter: WindowCounter;
 
   constructor(options: RoomManagerOptions = {}) {
     this.clock = options.clock ?? systemClock;
     this.maxRooms = options.maxRooms ?? MAX_ROOMS;
+    this.maxDeadRooms = options.maxDeadRooms ?? MAX_DEAD_ROOMS;
     this.createLimiter = new WindowCounter(
       this.clock,
       ROOM_CREATE_LIMIT_PER_IP,
@@ -79,38 +103,62 @@ export class RoomManager {
     );
   }
 
-  /** Number of rooms currently held in memory. */
   get size(): number {
     return this.rooms.size;
   }
 
-  join(roomId: string, auth: string, peerId: string, ip: string, conn: Connection): JoinResult {
-    if (!isValidRoomId(roomId)) {
-      return { ok: false, code: "bad_room" };
-    }
-    if (!isValidPeerId(peerId)) {
-      return { ok: false, code: "bad_format" };
-    }
-    // auth must be a well-formed 32-byte token (format only; never decrypted).
+  get deadSize(): number {
+    return this.deadRooms.size;
+  }
+
+  join(
+    roomId: string,
+    auth: string,
+    peerId: string,
+    ip: string,
+    conn: Connection,
+    requestedCap?: number,
+  ): JoinResult {
+    if (!isValidRoomId(roomId)) return { ok: false, code: "bad_room" };
+    if (!isValidPeerId(peerId)) return { ok: false, code: "bad_format" };
     if (typeof auth !== "string" || auth.length !== 43) {
       return { ok: false, code: "bad_auth" };
     }
-
     let room = this.rooms.get(roomId);
     if (!room) {
-      if (this.rooms.size >= this.maxRooms) {
-        return { ok: false, code: "room_full" };
+      const dead = this.deadRooms.get(roomId);
+      if (dead) {
+        return safeEqual(dead.authHash, hashAuth(auth))
+          ? { ok: false, closed: dead.reason }
+          : { ok: false, code: "bad_auth" };
       }
-      if (!this.createLimiter.allow(ip)) {
-        return { ok: false, code: "rate_limited" };
+      if (
+        requestedCap !== undefined &&
+        (!Number.isSafeInteger(requestedCap) || requestedCap < 2 || requestedCap > MAX_PEERS)
+      ) {
+        return { ok: false, code: "bad_cap" };
       }
+      if (this.rooms.size >= this.maxRooms) return { ok: false, code: "room_full" };
+      if (!this.createLimiter.allow(ip)) return { ok: false, code: "rate_limited" };
+
       const now = this.clock.now();
       room = {
         id: roomId,
         authHash: hashAuth(auth),
         peers: new Map(),
+        usedLabels: new Set(),
+        creatorPeerId: peerId,
+        cap: requestedCap ?? MAX_PEERS,
+        locked: false,
         createdAt: now,
         lastActivity: now,
+        hadMultipleConnected: false,
+        singletonSince: null,
+        fanout: new TokenBucket(
+          this.clock,
+          ROOM_FANOUT_RATE_PER_SECOND,
+          ROOM_FANOUT_RATE_PER_SECOND,
+        ),
       };
       this.rooms.set(roomId, room);
     } else if (!safeEqual(room.authHash, hashAuth(auth))) {
@@ -118,28 +166,51 @@ export class RoomManager {
     }
 
     const now = this.clock.now();
+    const creator = room.peers.get(room.creatorPeerId);
+    if (
+      creator &&
+      creator.socket === null &&
+      creator.awaySince !== null &&
+      now - creator.awaySince >= CREATOR_GRACE_MS
+    ) {
+      this.destroy(room, "creator_left");
+      return { ok: false, closed: "creator_left" };
+    }
+    let expiredMember: Peer | undefined;
+    for (const awayPeer of room.peers.values()) {
+      if (
+        awayPeer.peerId !== room.creatorPeerId &&
+        awayPeer.socket === null &&
+        awayPeer.awaySince !== null &&
+        now - awayPeer.awaySince >= RECONNECT_GRACE_MS
+      ) {
+        expiredMember = awayPeer;
+        break;
+      }
+    }
+    if (expiredMember) {
+      this.removePeer(room, expiredMember);
+      this.afterMemberLoss(room, now, false);
+      if (!this.rooms.has(roomId)) return { ok: false, closed: "peer_left" };
+      return this.join(roomId, auth, peerId, ip, conn, requestedCap);
+    }
     let peer = room.peers.get(peerId);
-    const isReconnect = peer !== undefined;
+    const reconnect = peer !== undefined;
     let wasAway = false;
 
     if (peer) {
-      if (peer.socket && peer.socket !== conn) {
-        peer.socket.close();
-      }
+      if (peer.socket && peer.socket !== conn) peer.socket.close();
       peer.socket = conn;
       wasAway = peer.awaySince !== null;
       peer.awaySince = null;
     } else {
-      if (room.peers.size >= 2) {
-        return { ok: false, code: "room_full" };
-      }
-      const taken = new Set<string>();
-      for (const existing of room.peers.values()) {
-        taken.add(existing.label);
-      }
+      if (room.locked) return { ok: false, code: "room_locked" };
+      if (room.peers.size >= room.cap) return { ok: false, code: "room_full" };
+      const label = generateLabel(room.usedLabels);
+      room.usedLabels.add(label);
       peer = {
         peerId,
-        label: generateLabel(taken),
+        label,
         socket: conn,
         awaySince: null,
         rate: new TokenBucket(this.clock, MSG_RATE_PER_SECOND, MSG_RATE_BURST),
@@ -147,83 +218,105 @@ export class RoomManager {
       room.peers.set(peerId, peer);
     }
 
-    const other = this.otherPeer(room, peer);
+    const others = Array.from(room.peers.values()).filter((candidate) => candidate !== peer);
     const joined: JoinedFrame = {
       type: "joined",
       label: peer.label,
-      peers: room.peers.size,
-      ...(other ? { peerLabel: other.label } : {}),
+      members: others.map((member) => member.label),
+      cap: room.cap,
+      locked: room.locked,
+      isCreator: peer.peerId === room.creatorPeerId,
     };
     conn.send(joined);
 
-    if (other) {
-      if (!isReconnect && other.socket) {
-        other.socket.send({ type: "peer", state: "joined", peerLabel: peer.label });
-      } else if (isReconnect && wasAway && other.socket) {
-        other.socket.send({ type: "peer", state: "back", peerLabel: peer.label });
-      }
-      if (other.socket === null) {
-        // Tell the joiner that the other person is currently disconnected.
-        conn.send({ type: "peer", state: "away", peerLabel: other.label });
+    for (const other of others) {
+      if (other.socket) {
+        const state = reconnect && wasAway ? "back" : "joined";
+        other.socket.send({
+          type: "peer",
+          state,
+          label: peer.label,
+          count: connectedCount(room),
+        });
+      } else {
+        conn.send({
+          type: "peer",
+          state: "away",
+          label: other.label,
+          count: connectedCount(room),
+        });
       }
     }
 
-    if (room.peers.size === 2) {
-      // Both people have joined: give the pair a fresh idle window.
-      room.lastActivity = now;
-    }
+    const present = connectedCount(room);
+    if (present >= 2) room.hadMultipleConnected = true;
+    room.singletonSince = room.hadMultipleConnected && present === 1 ? now : null;
+    if (present >= 2) room.lastActivity = now;
     return { ok: true, label: peer.label };
   }
 
-  /** Forward opaque ciphertext to the *other* peer; never echo to the sender. */
   msg(roomId: string, peerId: string, conn: Connection, frame: MsgFrame): void {
     const room = this.rooms.get(roomId);
-    if (!room) return;
-    const peer = room.peers.get(peerId);
-    if (!peer || peer.socket !== conn) return;
-
+    const peer = room?.peers.get(peerId);
+    if (!room || !peer || peer.socket !== conn) return;
     if (frame.c.length > MAX_FRAME_BYTES) {
       conn.send({ type: "err", code: "too_large" });
       return;
     }
-    if (!peer.rate.tryConsume()) {
+    const recipients = Array.from(room.peers.values()).filter(
+      (member) => member !== peer && member.socket !== null,
+    );
+    if (!peer.rate.tryConsume() || !room.fanout.tryConsume(recipients.length)) {
       conn.send({ type: "err", code: "rate_limited" });
       return;
     }
     room.lastActivity = this.clock.now();
 
-    const other = this.otherPeer(room, peer);
-    if (other && other.socket) {
-      other.socket.send({ type: "msg", c: frame.c });
+    for (const member of recipients) {
+      member.socket!.send({ type: "msg", from: peer.label, c: frame.c });
+    }
+    if (recipients.length > 0) {
       conn.send({ type: "ack", n: frame.n });
     }
-    // No connected peer (waiting room / peer away): drop silently, no ack.
   }
 
-  /** Explicit exit: the room is destroyed for everyone. */
+  lock(roomId: string, peerId: string, conn: Connection): ErrorCode | null {
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(peerId);
+    if (!room || !peer || peer.socket !== conn) return null;
+    if (peer.peerId !== room.creatorPeerId) return "not_creator";
+    if (!room.locked) {
+      room.locked = true;
+      for (const member of room.peers.values()) member.socket?.send({ type: "locked" });
+    }
+    return null;
+  }
+
   leave(roomId: string, peerId: string, conn: Connection): void {
     const room = this.rooms.get(roomId);
-    if (!room) return;
-    const peer = room.peers.get(peerId);
-    if (!peer || peer.socket !== conn) return;
-    this.destroy(room, "peer_left");
+    const peer = room?.peers.get(peerId);
+    if (!room || !peer || peer.socket !== conn) return;
+    if (peer.peerId === room.creatorPeerId) {
+      this.destroy(room, "creator_left");
+      return;
+    }
+    this.removePeer(room, peer);
+    this.afterMemberLoss(room, this.clock.now(), true);
   }
 
-  /** Socket dropped: keep the room for the grace window so the peer can return. */
   disconnect(roomId: string, peerId: string, conn: Connection): void {
     const room = this.rooms.get(roomId);
-    if (!room) return;
-    const peer = room.peers.get(peerId);
-    if (!peer || peer.socket !== conn) return;
+    const peer = room?.peers.get(peerId);
+    if (!room || !peer || peer.socket !== conn) return;
     peer.socket = null;
     peer.awaySince = this.clock.now();
-    const other = this.otherPeer(room, peer);
-    if (other && other.socket) {
-      other.socket.send({ type: "peer", state: "away", peerLabel: peer.label });
+    const count = connectedCount(room);
+    if (room.hadMultipleConnected && count === 1 && room.singletonSince === null) {
+      room.singletonSince = this.clock.now();
     }
+    this.broadcastPeer(room, "away", peer.label, count);
   }
 
-  /** Reaper: runs every REAPER_INTERVAL_MS (or manually in tests). */
   tick(): void {
     const now = this.clock.now();
     this.createLimiter.prune();
@@ -233,33 +326,96 @@ export class RoomManager {
         this.destroy(room, "expired");
         continue;
       }
-      let graceExpired = false;
-      for (const peer of room.peers.values()) {
+      const creator = room.peers.get(room.creatorPeerId);
+      if (
+        creator &&
+        creator.socket === null &&
+        creator.awaySince !== null &&
+        now - creator.awaySince >= CREATOR_GRACE_MS
+      ) {
+        this.destroy(room, "creator_left");
+        continue;
+      }
+      let removedMember = false;
+      for (const peer of Array.from(room.peers.values())) {
         if (
+          peer.peerId !== room.creatorPeerId &&
           peer.socket === null &&
           peer.awaySince !== null &&
           now - peer.awaySince >= RECONNECT_GRACE_MS
         ) {
-          graceExpired = true;
-          break;
+          this.removePeer(room, peer);
+          removedMember = true;
         }
       }
-      if (graceExpired) {
+      if (removedMember) this.afterMemberLoss(room, now, false);
+      if (!this.rooms.has(room.id)) continue;
+
+      if (
+        room.singletonSince !== null &&
+        now - room.singletonSince >= CREATOR_GRACE_MS &&
+        connectedCount(room) === 1
+      ) {
         this.destroy(room, "peer_left");
         continue;
       }
-      if (room.peers.size < 2 && now - room.createdAt >= WAITING_TIMEOUT_MS) {
+      if (
+        connectedCount(room) < 2 &&
+        !room.hadMultipleConnected &&
+        now - room.createdAt >= WAITING_TIMEOUT_MS
+      ) {
         this.destroy(room, "waiting_timeout");
         continue;
       }
-      if (room.peers.size === 2 && now - room.lastActivity >= IDLE_TIMEOUT_MS) {
+      if (room.hadMultipleConnected && now - room.lastActivity >= IDLE_TIMEOUT_MS) {
         this.destroy(room, "idle");
       }
     }
   }
 
+  private removePeer(room: Room, peer: Peer): void {
+    room.peers.delete(peer.peerId);
+    peer.socket?.close();
+    peer.socket = null;
+    this.broadcastPeer(room, "left", peer.label, connectedCount(room));
+  }
+
+  private afterMemberLoss(room: Room, now: number, explicitLeave: boolean): void {
+    const count = connectedCount(room);
+    if (room.hadMultipleConnected && count === 1) {
+      // Explicit leave is immediate. Otherwise, allow disconnected members their
+      // reconnect grace before deciding that only one person remains.
+      const hasAwayPeer = Array.from(room.peers.values()).some((peer) => peer.socket === null);
+      if (explicitLeave || !hasAwayPeer) {
+        this.destroy(room, "peer_left");
+        return;
+      }
+      room.singletonSince ??= now;
+    } else if (count >= 2) {
+      room.singletonSince = null;
+    }
+    if (room.peers.size === 0) this.rooms.delete(room.id);
+  }
+
+  private broadcastPeer(
+    room: Room,
+    state: "joined" | "left" | "away" | "back",
+    label: string,
+    count: number,
+  ): void {
+    for (const peer of room.peers.values()) {
+      if (peer.socket) peer.socket.send({ type: "peer", state, label, count });
+    }
+  }
+
   private destroy(room: Room, reason: CloseReason): void {
     this.rooms.delete(room.id);
+    this.deadRooms.set(room.id, { authHash: room.authHash, reason });
+    while (this.deadRooms.size > this.maxDeadRooms) {
+      const oldest = this.deadRooms.keys().next().value;
+      if (oldest === undefined) break;
+      this.deadRooms.delete(oldest);
+    }
     for (const peer of room.peers.values()) {
       if (peer.socket) {
         peer.socket.send({ type: "closed", reason });
@@ -268,14 +424,5 @@ export class RoomManager {
       }
       peer.awaySince = null;
     }
-  }
-
-  private otherPeer(room: Room, peer: Peer): Peer | null {
-    for (const candidate of room.peers.values()) {
-      if (candidate.peerId !== peer.peerId) {
-        return candidate;
-      }
-    }
-    return null;
   }
 }

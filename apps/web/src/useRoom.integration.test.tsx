@@ -91,6 +91,7 @@ describe("two tabs against the real relay", () => {
 
   afterEach(() => {
     cleanup();
+    TestWebSocket.instances = [];
     document.querySelectorAll("[data-custom-container]").forEach((element) => element.remove());
     window.history.pushState(null, "", "/");
   });
@@ -126,6 +127,29 @@ describe("two tabs against the real relay", () => {
     );
     return { roomId, containerA, containerB, a, b };
   }
+
+  it("receives server-stamped sender labels and never sees its own relayed frame", async () => {
+    const { containerA, containerB, a, b } = await openTwoTabs();
+    const aLabel = extractLabel(containerA);
+    const bLabel = extractLabel(containerB);
+    const input = within(containerA).getByTestId("message-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "stamped for B" } });
+    fireEvent.click(within(containerA).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(within(containerB).getByText("stamped for B")).toBeTruthy());
+    const sent = TestWebSocket.instances[0]!.sentFrames.map((frame) => JSON.parse(frame));
+    const relayed = TestWebSocket.instances[1]!.receivedFrames.map((frame) =>
+      JSON.parse(frame),
+    ).find((frame) => frame.type === "msg");
+    expect(sent.some((frame) => frame.type === "msg" && "from" in frame)).toBe(false);
+    expect(relayed).toEqual(expect.objectContaining({ type: "msg", from: aLabel }));
+    expect(relayed.from).not.toBe(bLabel);
+    expect(
+      TestWebSocket.instances[0]!.receivedFrames.map((frame) => JSON.parse(frame)),
+    ).not.toContain(expect.objectContaining({ type: "msg" }));
+    expect(within(containerA).queryByText("stamped for B")).toBeNull();
+    a.unmount();
+    b.unmount();
+  });
 
   it("shows presence changes and ends with a clear message when one tab closes", async () => {
     const roomId = generateRoomId();

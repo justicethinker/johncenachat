@@ -94,8 +94,16 @@ async function joinFlow(roomId: string, secret: string): Promise<MockWebSocket> 
   });
   await until(() => socket.sent.length === 1);
   act(() => {
-    socket.message({ type: "joined", label: "4821", peers: 1 });
+    socket.message({
+      type: "joined",
+      label: "4821",
+      members: [],
+      cap: 8,
+      locked: false,
+      isCreator: true,
+    });
   });
+
   await until(() => harnessApi !== null && harnessApi.status === "waiting");
   return socket;
 }
@@ -137,6 +145,7 @@ describe("useRoom connection state machine", () => {
     const join = JSON.parse(socket.sent[0]!) as { type: string; auth: string; peerId: string };
     expect(join.type).toBe("join");
     expect(join.peerId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(join).not.toHaveProperty("from");
     const { authToken } = await deriveKeys(secret);
     expect(join.auth).toBe(authToken);
   });
@@ -155,20 +164,27 @@ describe("useRoom connection state machine", () => {
     await until(() => socket.sent.length === 1);
 
     act(() => {
-      socket.message({ type: "joined", label: "4821", peers: 1 });
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+      });
     });
     await until(() => screen.queryByTestId("waiting") !== null);
     expect(screen.getByTestId("label").textContent).toBe("You are 4821");
     expect(screen.getByTestId("presence").className).toContain("presence-off");
 
     act(() => {
-      socket.message({ type: "peer", state: "joined", peerLabel: "0377" });
+      socket.message({ type: "peer", state: "joined", label: "0377", count: 2 });
     });
     await until(() => screen.getByTestId("presence").className.includes("presence-on"));
     expect(screen.queryByTestId("waiting")).toBeNull();
 
     act(() => {
-      socket.message({ type: "peer", state: "away" });
+      socket.message({ type: "peer", state: "away", label: "0377", count: 1 });
     });
     await until(() => screen.getByTestId("presence").className.includes("presence-off"));
     expect(screen.queryByTestId("waiting")).not.toBeNull();
@@ -217,7 +233,14 @@ describe("useRoom connection state machine", () => {
     await until(() => first.sent.length === 1);
     const firstJoin = JSON.parse(first.sent[0]!) as { peerId: string };
     act(() => {
-      first.message({ type: "joined", label: "4821", peers: 1 });
+      first.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+      });
     });
 
     // From here on, control time so the reconnect delay runs instantly.
@@ -241,7 +264,14 @@ describe("useRoom connection state machine", () => {
     expect(secondJoin.peerId).toBe(firstJoin.peerId);
 
     act(() => {
-      second.message({ type: "joined", label: "4821", peers: 2 });
+      second.message({
+        type: "joined",
+        label: "4821",
+        members: ["0377"],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+      });
     });
     expect(harnessApi!.status).toBe("active");
     expect(harnessApi!.label).toBe("4821");
@@ -260,7 +290,14 @@ describe("useRoom connection state machine", () => {
     });
     await until(() => first.sent.length === 1);
     act(() => {
-      first.message({ type: "joined", label: "4821", peers: 1 });
+      first.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+      });
     });
 
     vi.useFakeTimers();
@@ -288,7 +325,7 @@ describe("useRoom connection state machine", () => {
     const socket = await joinFlow(roomId, secret);
 
     act(() => {
-      socket.message({ type: "peer", state: "joined", peerLabel: "0377" });
+      socket.message({ type: "peer", state: "joined", label: "0377", count: 2 });
     });
     await until(() => harnessApi!.status === "active");
 
@@ -321,7 +358,7 @@ describe("useRoom connection state machine", () => {
       roomId,
     );
     act(() => {
-      socket.message({ type: "msg", c: duplicate });
+      socket.message({ type: "msg", from: "0000", c: duplicate });
     });
     await until(() => harnessApi!.messages.length === 1);
     const duplicateAgain = await encryptMessage(
@@ -330,7 +367,7 @@ describe("useRoom connection state machine", () => {
       roomId,
     );
     act(() => {
-      socket.message({ type: "msg", c: duplicateAgain });
+      socket.message({ type: "msg", from: "0000", c: duplicateAgain });
     });
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -344,7 +381,7 @@ describe("useRoom connection state machine", () => {
       roomId,
     );
     act(() => {
-      socket.message({ type: "msg", c: fresh });
+      socket.message({ type: "msg", from: "0000", c: fresh });
     });
     await until(() => harnessApi!.messages.length === 2);
     expect(harnessApi!.messages[1]!.text).toBe("their message");
@@ -374,7 +411,14 @@ describe("useRoom connection state machine", () => {
     });
     await until(() => socket.sent.length === 1);
     act(() => {
-      socket.message({ type: "joined", label: "4821", peers: 2 });
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: ["0377"],
+        cap: 2,
+        locked: false,
+        isCreator: true,
+      });
     });
     await until(() => screen.queryByTestId("message-input") !== null);
 
@@ -399,6 +443,80 @@ describe("useRoom connection state machine", () => {
     expect(screen.getByTestId("delivered-tick").className).not.toContain("tick-visible");
   });
 
+  it("ends the chat locally when the user clicks End chat", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: ["0377"],
+        cap: 2,
+        locked: false,
+        isCreator: true,
+      });
+    });
+    await until(() => screen.queryByTestId("message-input") !== null);
+
+    fireEvent.click(screen.getByTestId("end-chat"));
+    await until(() => screen.queryByTestId("ended") !== null);
+    expect(screen.getByTestId("ended").textContent).toBe("You ended this chat.");
+
+    // The server is told to destroy the room for both people.
+    const leave = JSON.parse(socket.sent[1]!) as { type: string };
+    expect(leave.type).toBe("leave");
+
+    // The late `closed` frame from the server must not override the local
+    // end state, and a dropped socket must not trigger a reconnect.
+    act(() => {
+      socket.message({ type: "closed", reason: "peer_left" });
+      socket.drop();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId("ended").textContent).toBe("You ended this chat.");
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it("shows the room's close reason when the link's room is already gone", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+
+    // Dead link: server answers `closed` instead of `joined`, then drops us.
+    act(() => {
+      socket.message({ type: "closed", reason: "expired" });
+      socket.drop();
+    });
+    await until(() => screen.queryByTestId("ended") !== null);
+    expect(screen.getByTestId("ended").textContent).toBe(
+      "This chat reached its time limit and was closed.",
+    );
+    // No reconnect loop against a dead link.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
   it("surfaces join errors as an ended state", async () => {
     const roomId = generateRoomId();
     const secret = generateSecret();
@@ -414,6 +532,6 @@ describe("useRoom connection state machine", () => {
       socket.message({ type: "err", code: "room_full" });
     });
     await until(() => screen.queryByTestId("ended") !== null);
-    expect(screen.getByTestId("ended").textContent).toBe("This chat already has two people in it.");
+    expect(screen.getByTestId("ended").textContent).toBe("This room is full or closed.");
   });
 });

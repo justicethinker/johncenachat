@@ -1,15 +1,24 @@
 import { isBase64Url, isBase64UrlOfLength } from "./base64.js";
-import { AUTH_TOKEN_BYTES, MAX_FRAME_BYTES } from "./constants.js";
+import { AUTH_TOKEN_BYTES, MAX_FRAME_BYTES, MAX_PEERS } from "./constants.js";
 import { isValidPeerId } from "./random.js";
 
 /** Why the server destroyed a room. */
-export type CloseReason = "peer_left" | "idle" | "expired" | "waiting_timeout";
+export type CloseReason =
+  "peer_left" | "idle" | "expired" | "waiting_timeout" | "creator_left" | "closed_by_creator";
 
 /** Server error codes. */
 export type ErrorCode =
-  "room_full" | "bad_auth" | "bad_room" | "too_large" | "rate_limited" | "bad_format";
+  | "room_full"
+  | "bad_auth"
+  | "bad_room"
+  | "too_large"
+  | "rate_limited"
+  | "bad_format"
+  | "room_locked"
+  | "bad_cap"
+  | "not_creator";
 
-export type PeerState = "joined" | "away" | "back";
+export type PeerState = "joined" | "left" | "away" | "back";
 
 // --- Client -> server ---
 
@@ -17,6 +26,8 @@ export interface JoinFrame {
   type: "join";
   auth: string;
   peerId: string;
+  /** Group size cap, honoured only for the first joiner (the creator). */
+  cap?: number;
 }
 
 export interface MsgFrame {
@@ -27,35 +38,51 @@ export interface MsgFrame {
   c: string;
 }
 
+export interface LockFrame {
+  type: "lock";
+}
+
+export interface CloseFrame {
+  type: "close";
+}
+
 export interface LeaveFrame {
   type: "leave";
 }
 
-export type ClientFrame = JoinFrame | MsgFrame | LeaveFrame;
+export type ClientFrame = JoinFrame | MsgFrame | LockFrame | CloseFrame | LeaveFrame;
 
 // --- Server -> client ---
 
 export interface JoinedFrame {
   type: "joined";
   label: string;
-  peerLabel?: string;
-  peers: number;
+  members: string[];
+  cap: number;
+  locked: boolean;
+  isCreator: boolean;
 }
 
 export interface PeerFrame {
   type: "peer";
   state: PeerState;
-  peerLabel?: string;
+  label: string;
+  count: number;
 }
 
 export interface ServerMsgFrame {
   type: "msg";
+  from: string;
   c: string;
 }
 
 export interface AckFrame {
   type: "ack";
   n: number;
+}
+
+export interface LockedFrame {
+  type: "locked";
 }
 
 export interface ClosedFrame {
@@ -69,14 +96,17 @@ export interface ErrorFrame {
 }
 
 export type ServerFrame =
-  JoinedFrame | PeerFrame | ServerMsgFrame | AckFrame | ClosedFrame | ErrorFrame;
+  JoinedFrame | PeerFrame | ServerMsgFrame | AckFrame | LockedFrame | ClosedFrame | ErrorFrame;
 
 const CLOSE_REASONS: ReadonlySet<string> = new Set<CloseReason>([
   "peer_left",
   "idle",
   "expired",
   "waiting_timeout",
+  "creator_left",
+  "closed_by_creator",
 ]);
+
 const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   "room_full",
   "bad_auth",
@@ -84,8 +114,12 @@ const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   "too_large",
   "rate_limited",
   "bad_format",
+  "room_locked",
+  "bad_cap",
+  "not_creator",
 ]);
-const PEER_STATES: ReadonlySet<string> = new Set<PeerState>(["joined", "away", "back"]);
+
+const PEER_STATES: ReadonlySet<string> = new Set<PeerState>(["joined", "left", "away", "back"]);
 
 const LABEL_RE = /^[0-9]{4}$/;
 
@@ -115,15 +149,31 @@ export function parseClientFrame(raw: string): ClientFrame | null {
     return null;
   }
   switch (value.type) {
-    case "join":
-      if (
-        isBase64UrlOfLength(value.auth, AUTH_TOKEN_BYTES) &&
-        isValidPeerId(value.peerId) &&
-        hasOnlyKeys(value, ["type", "auth", "peerId"])
-      ) {
-        return { type: "join", auth: value.auth, peerId: value.peerId };
+    case "join": {
+      if (!isBase64UrlOfLength(value.auth, AUTH_TOKEN_BYTES) || !isValidPeerId(value.peerId)) {
+        return null;
       }
-      return null;
+      // A client-provided `from` would let any member impersonate another since
+      // all members share one key. The server stamps `from`; clients may not.
+      if ("from" in value) {
+        return null;
+      }
+      const cap = value.cap;
+      // Preserve numeric cap input for RoomManager: a creator's invalid value
+      // gets `bad_cap`, while later joiners' values are ignored.
+      if (cap !== undefined && typeof cap !== "number") {
+        return null;
+      }
+      if (!hasOnlyKeys(value, ["type", "auth", "peerId", "cap"])) {
+        return null;
+      }
+      return {
+        type: "join",
+        auth: value.auth,
+        peerId: value.peerId,
+        cap: cap === undefined ? undefined : (cap as number),
+      };
+    }
     case "msg":
       if (
         isCounter(value.n) &&
@@ -134,6 +184,16 @@ export function parseClientFrame(raw: string): ClientFrame | null {
         hasOnlyKeys(value, ["type", "n", "c"])
       ) {
         return { type: "msg", n: value.n, c: value.c };
+      }
+      return null;
+    case "lock":
+      if (hasOnlyKeys(value, ["type"])) {
+        return { type: "lock" };
+      }
+      return null;
+    case "close":
+      if (hasOnlyKeys(value, ["type"])) {
+        return { type: "close" };
       }
       return null;
     case "leave":
@@ -154,74 +214,104 @@ export function parseServerFrame(raw: string): ServerFrame | null {
   }
   switch (value.type) {
     case "joined": {
-      if (
-        typeof value.label === "string" &&
-        LABEL_RE.test(value.label) &&
-        isCounter(value.peers) &&
-        value.peers >= 1 &&
-        value.peers <= 2 &&
-        hasOnlyKeys(value, ["type", "label", "peerLabel", "peers"]) &&
-        (value.peerLabel === undefined ||
-          (typeof value.peerLabel === "string" && LABEL_RE.test(value.peerLabel)))
-      ) {
-        const frame: JoinedFrame = { type: "joined", label: value.label, peers: value.peers };
-        if (value.peerLabel !== undefined) {
-          frame.peerLabel = value.peerLabel;
-        }
-        return frame;
+      if (typeof value.label !== "string" || !LABEL_RE.test(value.label)) {
+        return null;
       }
-      return null;
+      if (
+        !Array.isArray(value.members) ||
+        !value.members.every((member) => typeof member === "string" && LABEL_RE.test(member))
+      ) {
+        return null;
+      }
+      if (
+        !isCounter(value.cap) ||
+        value.cap < 2 ||
+        value.cap > MAX_PEERS ||
+        typeof value.locked !== "boolean" ||
+        typeof value.isCreator !== "boolean"
+      ) {
+        return null;
+      }
+      if (!hasOnlyKeys(value, ["type", "label", "members", "cap", "locked", "isCreator"])) {
+        return null;
+      }
+      return {
+        type: "joined",
+        label: value.label,
+        members: value.members as string[],
+        cap: value.cap as number,
+        locked: value.locked as boolean,
+        isCreator: value.isCreator as boolean,
+      };
     }
     case "peer": {
       if (
-        typeof value.state === "string" &&
-        PEER_STATES.has(value.state) &&
-        hasOnlyKeys(value, ["type", "state", "peerLabel"]) &&
-        (value.peerLabel === undefined ||
-          (typeof value.peerLabel === "string" && LABEL_RE.test(value.peerLabel)))
+        typeof value.state !== "string" ||
+        !PEER_STATES.has(value.state) ||
+        typeof value.label !== "string" ||
+        !LABEL_RE.test(value.label) ||
+        !isCounter(value.count) ||
+        value.count < 1 ||
+        value.count > MAX_PEERS
       ) {
-        const frame: PeerFrame = { type: "peer", state: value.state as PeerState };
-        if (value.peerLabel !== undefined) {
-          frame.peerLabel = value.peerLabel;
-        }
-        return frame;
+        return null;
       }
-      return null;
+      if (!hasOnlyKeys(value, ["type", "state", "label", "count"])) {
+        return null;
+      }
+      const frame: PeerFrame = {
+        type: "peer",
+        state: value.state as PeerState,
+        label: value.label,
+        count: value.count,
+      };
+      return frame;
     }
     case "msg":
-      if (
-        typeof value.c === "string" &&
-        value.c.length > 0 &&
-        value.c.length <= MAX_FRAME_BYTES &&
-        isBase64Url(value.c) &&
-        hasOnlyKeys(value, ["type", "c"])
-      ) {
-        return { type: "msg", c: value.c };
+      if (typeof value.from !== "string" || !LABEL_RE.test(value.from)) {
+        return null;
       }
-      return null;
+      if (
+        typeof value.c !== "string" ||
+        value.c.length === 0 ||
+        value.c.length > MAX_FRAME_BYTES ||
+        !isBase64Url(value.c)
+      ) {
+        return null;
+      }
+      if (!hasOnlyKeys(value, ["type", "from", "c"])) {
+        return null;
+      }
+      return { type: "msg", from: value.from, c: value.c };
     case "ack":
       if (isCounter(value.n) && hasOnlyKeys(value, ["type", "n"])) {
         return { type: "ack", n: value.n };
       }
       return null;
-    case "closed":
-      if (
-        typeof value.reason === "string" &&
-        CLOSE_REASONS.has(value.reason) &&
-        hasOnlyKeys(value, ["type", "reason"])
-      ) {
-        return { type: "closed", reason: value.reason as CloseReason };
+    case "locked": {
+      if (hasOnlyKeys(value, ["type"])) {
+        return { type: "locked" };
       }
       return null;
-    case "err":
-      if (
-        typeof value.code === "string" &&
-        ERROR_CODES.has(value.code) &&
-        hasOnlyKeys(value, ["type", "code"])
-      ) {
-        return { type: "err", code: value.code as ErrorCode };
+    }
+    case "closed": {
+      if (typeof value.reason !== "string" || !CLOSE_REASONS.has(value.reason)) {
+        return null;
       }
-      return null;
+      if (!hasOnlyKeys(value, ["type", "reason"])) {
+        return null;
+      }
+      return { type: "closed", reason: value.reason as CloseReason };
+    }
+    case "err": {
+      if (typeof value.code !== "string" || !ERROR_CODES.has(value.code)) {
+        return null;
+      }
+      if (!hasOnlyKeys(value, ["type", "code"])) {
+        return null;
+      }
+      return { type: "err", code: value.code as ErrorCode };
+    }
     default:
       return null;
   }

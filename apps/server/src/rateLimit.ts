@@ -14,17 +14,19 @@ export class TokenBucket {
     this.lastRefill = clock.now();
   }
 
-  tryConsume(): boolean {
+  tryConsume(cost = 1): boolean {
+    if (!Number.isSafeInteger(cost) || cost < 0 || cost > this.burst) return false;
+    if (cost === 0) return true;
     const now = this.clock.now();
     const elapsed = now - this.lastRefill;
     if (elapsed > 0) {
       this.tokens = Math.min(this.burst, this.tokens + (elapsed * this.ratePerSecond) / 1000);
       this.lastRefill = now;
     }
-    if (this.tokens < 1) {
+    if (this.tokens < cost) {
       return false;
     }
-    this.tokens -= 1;
+    this.tokens -= cost;
     return true;
   }
 }

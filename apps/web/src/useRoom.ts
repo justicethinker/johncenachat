@@ -24,7 +24,7 @@ import {
  */
 
 export type RoomStatus = "incomplete" | "connecting" | "waiting" | "active" | "ended";
-export type EndReason = CloseReason | ErrorCode | "reconnect_failed";
+export type EndReason = CloseReason | ErrorCode | "reconnect_failed" | "left";
 
 export interface ReceivedMessage {
   id: string;
@@ -37,6 +37,10 @@ export interface RoomState {
   label: string | null;
   peerLabel: string | null;
   peerPresent: boolean;
+  members: Array<{ label: string; present: boolean }>;
+  cap: number;
+  isCreator: boolean;
+  locked: boolean;
   endReason: EndReason | null;
   lastError: ErrorCode | null;
   messages: ReceivedMessage[];
@@ -47,6 +51,8 @@ export interface RoomApi extends RoomState {
   /** Encrypts and queues a message. Returns false when it cannot be sent. */
   sendMessage(text: string, re?: string): boolean;
   clearError(): void;
+  /** Leave now: tells the server to destroy the room and shows the ended screen. */
+  endChat(): void;
   /** Ids of messages this tab has sent (kept in memory only, for replies). */
   sentIds: ReadonlySet<string>;
 }
@@ -56,6 +62,10 @@ const INITIAL_STATE: RoomState = {
   label: null,
   peerLabel: null,
   peerPresent: false,
+  members: [],
+  cap: 8,
+  isCreator: false,
+  locked: false,
   endReason: null,
   lastError: null,
   messages: [],
@@ -78,6 +88,8 @@ export function useRoom(roomId: string): RoomApi {
   const msgCounterRef = useRef(0);
   const sendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const sentIdsRef = useRef<Set<string>>(new Set());
+  /** Assigned by the mounted room so the button can leave from outside the effect. */
+  const endChatRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,29 +177,50 @@ export function useRoom(roomId: string): RoomApi {
           clearConnectTimer();
           joinedRef.current = true;
           reconnectDeadline = null;
-          const present = frame.peers === 2;
+          const members = frame.members.map((label) => ({ label, present: true }));
+          const present = members.length > 0;
           setState((s) => ({
             ...s,
             status: present ? "active" : "waiting",
             label: frame.label,
-            peerLabel: frame.peerLabel ?? s.peerLabel,
+            peerLabel: members[0]?.label ?? null,
             peerPresent: present,
+            members,
+            cap: frame.cap,
+            isCreator: frame.isCreator,
+            locked: frame.locked,
             endReason: null,
           }));
           return;
         }
         case "peer": {
-          const present = frame.state !== "away";
-          setState((s) =>
-            s.status === "ended"
-              ? s
-              : {
-                  ...s,
-                  status: present ? "active" : "waiting",
-                  peerPresent: present,
-                  peerLabel: frame.peerLabel ?? s.peerLabel,
-                },
-          );
+          setState((s) => {
+            if (s.status === "ended") return s;
+            const existing = s.members.find((member) => member.label === frame.label);
+            const members =
+              frame.state === "left"
+                ? s.members.filter((member) => member.label !== frame.label)
+                : existing
+                  ? s.members.map((member) =>
+                      member.label === frame.label
+                        ? { ...member, present: frame.state !== "away" }
+                        : member,
+                    )
+                  : [...s.members, { label: frame.label, present: frame.state !== "away" }];
+            const otherMembers = members.filter((member) => member.label !== s.label);
+            const peerPresent = otherMembers.some((member) => member.present);
+            return {
+              ...s,
+              status: peerPresent ? "active" : "waiting",
+              peerPresent,
+              peerLabel: otherMembers[0]?.label ?? null,
+              members: otherMembers,
+            };
+          });
+          return;
+        }
+        case "locked": {
+          setState((s) => ({ ...s, locked: true }));
           return;
         }
         case "msg": {
@@ -285,8 +318,50 @@ export function useRoom(roomId: string): RoomApi {
     window.addEventListener("beforeunload", leaveOnce);
     window.addEventListener("pagehide", leaveOnce);
 
+    // Explicit "End chat": stop reconnecting, show the ended screen right
+    // away, and tell the server to destroy the room for both people. The
+    // server closes our socket after `leave`, so ignore anything after it.
+    endChatRef.current = (): void => {
+      if (cancelled) return;
+      intentionalClose = true;
+      joinedRef.current = false;
+      clearConnectTimer();
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      const socket = wsRef.current;
+      wsRef.current = null;
+      setState((s) =>
+        s.status === "ended" ? s : { ...s, status: "ended", endReason: "left", peerPresent: false },
+      );
+      if (!socket) return;
+      if (socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(JSON.stringify({ type: "leave" }));
+        } catch {
+          // Socket already closing; the server reaps the room anyway.
+        }
+        // Fallback close in case the server never answers the leave.
+        setTimeout(() => {
+          try {
+            socket.close();
+          } catch {
+            // Already closed.
+          }
+        }, 1_000);
+      } else {
+        try {
+          socket.close();
+        } catch {
+          // Already closed.
+        }
+      }
+    };
+
     return () => {
       cancelled = true;
+      endChatRef.current = null;
       window.removeEventListener("beforeunload", leaveOnce);
       window.removeEventListener("pagehide", leaveOnce);
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
@@ -364,5 +439,9 @@ export function useRoom(roomId: string): RoomApi {
     setState((s) => (s.lastError === null ? s : { ...s, lastError: null }));
   }
 
-  return { ...state, sendMessage, clearError, sentIds: sentIdsRef.current };
+  function endChat(): void {
+    endChatRef.current?.();
+  }
+
+  return { ...state, sendMessage, clearError, endChat, sentIds: sentIdsRef.current };
 }

@@ -171,7 +171,7 @@ test("a third context opening the same link gets room full", async ({ browser })
 
     const c = await contextC.newPage();
     await joinRoom(c, link);
-    await expect(c.getByTestId("ended")).toHaveText("This chat already has two people in it.");
+    await expect(c.getByTestId("ended")).toHaveText("This room is full or closed.");
 
     // The existing pair is unaffected.
     await expect(a.getByTestId("presence")).toHaveClass(/presence-on/);

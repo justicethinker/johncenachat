@@ -37,3 +37,24 @@ export const MSG_RATE_BURST = 10;
 export const ROOM_CREATE_WINDOW_MS = 60 * 1000;
 /** Rooms one IP may create per window. Spec does not fix this number; see README notes. */
 export const ROOM_CREATE_LIMIT_PER_IP = 10;
+/**
+ * Dead rooms remembered (roomId + one-way token hash + close reason) so their
+ * links stay refused instead of quietly opening a new room. Oldest entries are
+ * evicted past this cap, bounding memory at a few MB.
+ */
+export const MAX_DEAD_ROOMS = 20_000;
+
+// --- Group chat (spec addendum) ---
+/** Maximum members in a group room. The creator picks the cap, 2..MAX_PEERS. */
+export const MAX_PEERS = 8;
+/** @deprecated Use MAX_PEERS. Retained for the in-progress UI migration. */
+export const MAX_CHAT_OCCUPANCY = MAX_PEERS;
+
+/** Grace window for the creator to come back before the room is destroyed. */
+export const CREATOR_GRACE_MS = 30 * 1000;
+
+/**
+ * Per-room fan-out guard: reject a message with `rate_limited` if the room's
+ * total forwarded frames exceed this many per second.
+ */
+export const ROOM_FANOUT_RATE_PER_SECOND = 200;

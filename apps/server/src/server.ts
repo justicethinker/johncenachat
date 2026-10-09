@@ -71,17 +71,28 @@ export function createAsideServer(options: { clock?: Clock } = {}): AsideServer 
       const frame = parseClientFrame(buffer.toString("utf8"));
       if (!frame) {
         conn.send({ type: "err", code: "bad_format" });
+        // A malformed pre-join frame cannot establish a room session.
+        if (peerId === null) conn.close();
         return;
       }
 
       if (peerId === null) {
         if (frame.type !== "join") {
           conn.send({ type: "err", code: "bad_format" });
+          conn.close();
           return;
         }
-        const result = manager.join(roomId, frame.auth, frame.peerId, ip, conn);
+        const result = manager.join(roomId, frame.auth, frame.peerId, ip, conn, frame.cap);
         if (!result.ok) {
-          conn.send({ type: "err", code: result.code });
+          if ("closed" in result) {
+            // The link belongs to a room that already closed: report why, then
+            // drop the socket so nothing can be re-created under this id.
+            conn.send({ type: "closed", reason: result.closed });
+            conn.close();
+          } else {
+            conn.send({ type: "err", code: result.code });
+            if (result.code === "bad_cap" || result.code === "bad_format") conn.close();
+          }
           return;
         }
         peerId = frame.peerId;
@@ -94,8 +105,15 @@ export function createAsideServer(options: { clock?: Clock } = {}): AsideServer 
       }
       if (frame.type === "msg") {
         manager.msg(roomId, peerId, conn, frame);
-      } else {
+      } else if (frame.type === "leave") {
         manager.leave(roomId, peerId, conn);
+      } else if (frame.type === "lock") {
+        const code = manager.lock(roomId, peerId, conn);
+        if (code) conn.send({ type: "err", code });
+      } else if (frame.type === "close") {
+        conn.send({ type: "err", code: "bad_format" });
+      } else {
+        conn.send({ type: "err", code: "bad_format" });
       }
     });
 
