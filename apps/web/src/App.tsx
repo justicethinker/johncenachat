@@ -1,5 +1,6 @@
 import { Room } from "./Room";
 import { Home } from "./Home";
+import { QuickStart } from "./QuickStart";
 import { useRoute } from "./router";
 
 export function App() {
@@ -10,6 +11,9 @@ export function App() {
   }
   if (route.kind === "home") {
     return <Home />;
+  }
+  if (route.kind === "quickStart") {
+    return <QuickStart key={window.location.pathname} requested={route.count} />;
   }
   return (
     <main className="page">

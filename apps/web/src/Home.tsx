@@ -1,19 +1,16 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { MAX_PEERS, generateRoomId, generateSecret } from "@aside/protocol";
-import { navigate } from "./router";
+import { InviteLink } from "./InviteLink";
+import { takePendingInvite } from "./router";
 
 /** Group sizes the creator can pick. The server default is MAX_PEERS. */
 const SIZE_OPTIONS = Array.from({ length: MAX_PEERS - 1 }, (_, index) => index + 2);
 
 export function Home() {
-  const [link, setLink] = useState<string | null>(null);
+  // A quick-start invite arrives here already made, and is shown once.
+  const [link, setLink] = useState<string | null>(() => takePendingInvite());
   const [size, setSize] = useState<number>(MAX_PEERS);
   const [vanish, setVanish] = useState(true);
-  const [copied, setCopied] = useState(false);
-  const [copyHelp, setCopyHelp] = useState("");
-  const linkRef = useRef<HTMLDivElement | null>(null);
-
-  const shareSupported = typeof navigator.share === "function";
 
   function createChat(): void {
     const roomId = generateRoomId();
@@ -22,43 +19,6 @@ export function Home() {
     const settings = new URLSearchParams({ cap: String(size) });
     if (!vanish) settings.set("vanish", "0");
     setLink(`${window.location.origin}/r/${roomId}?${settings.toString()}#${secret}`);
-    setCopied(false);
-    setCopyHelp("");
-  }
-
-  async function copy(): Promise<void> {
-    if (!link) return;
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setCopyHelp("Invite link copied. Share it privately with the people you want here.");
-    } catch {
-      const element = linkRef.current;
-      if (element) {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      }
-      setCopied(false);
-      setCopyHelp(
-        "The link is selected. Copy it, then share it privately with the people you want here.",
-      );
-    }
-  }
-
-  function share(): void {
-    if (!link || typeof navigator.share !== "function") return;
-    void navigator.share({ url: link }).catch(() => {
-      // Cancellation is intentional; the invite remains available to copy.
-    });
-  }
-
-  function openChat(): void {
-    if (!link) return;
-    const url = new URL(link);
-    navigate(`${url.pathname}${url.search}${url.hash}`);
   }
 
   return (
@@ -123,40 +83,7 @@ export function Home() {
                 </p>
               </div>
             ) : (
-              <div className="link-card">
-                <p className="invite-title">Your invite link</p>
-                <p className="hint">
-                  Share the full link privately. The part after # is the key. Whoever opens it first
-                  becomes the host.
-                </p>
-                <div
-                  className="link-box"
-                  ref={linkRef}
-                  data-testid="invite-link"
-                  role="textbox"
-                  aria-label="Private chat invite link"
-                  aria-readonly="true"
-                  tabIndex={0}
-                >
-                  {link}
-                </div>
-                <div className="actions">
-                  <button type="button" className="btn btn-primary" onClick={() => void copy()}>
-                    {copied ? "Copied" : "Copy link"}
-                  </button>
-                  {shareSupported && (
-                    <button type="button" className="btn" onClick={share}>
-                      Share
-                    </button>
-                  )}
-                  <button type="button" className="btn" onClick={openChat}>
-                    Open chat
-                  </button>
-                </div>
-                <p className="copy-feedback" role="status" aria-live="polite">
-                  {copyHelp}
-                </p>
-              </div>
+              <InviteLink link={link} />
             )}
           </div>
 

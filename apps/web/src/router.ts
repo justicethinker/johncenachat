@@ -2,11 +2,16 @@ import { useSyncExternalStore } from "react";
 
 /**
  * Minimal hand-rolled router (no third-party dependency).
- * Routes: "/" (home) and "/r/:roomId" (room). The secret lives in the
- * URL fragment, which is deliberately NOT part of the route state.
+ * Routes: "/" (home), "/r/:roomId" (room) and "/new" or "/new/:count"
+ * (quick start). The secret lives in the URL fragment, which is deliberately
+ * NOT part of the route state.
  */
 
-export type Route = { kind: "home" } | { kind: "room"; roomId: string } | { kind: "notFound" };
+export type Route =
+  | { kind: "home" }
+  | { kind: "room"; roomId: string }
+  | { kind: "quickStart"; count: number | null }
+  | { kind: "notFound" };
 
 export function parseRoute(pathname: string): Route {
   if (pathname === "/") {
@@ -15,6 +20,12 @@ export function parseRoute(pathname: string): Route {
   const match = /^\/r\/([A-Za-z0-9_-]+)\/?$/.exec(pathname);
   if (match) {
     return { kind: "room", roomId: match[1]! };
+  }
+  // The count is only parsed here; QuickStart decides whether it is a usable size.
+  const quick = /^\/new(?:\/([^/]*))?\/?$/.exec(pathname);
+  if (quick) {
+    const segment = quick[1] ?? "";
+    return { kind: "quickStart", count: /^\d+$/.test(segment) ? Number(segment) : null };
   }
   return { kind: "notFound" };
 }
@@ -40,6 +51,30 @@ export function navigate(to: string): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+/**
+ * Replaces the current history entry and tells the router, so the screen always
+ * matches the address bar. Used by quick start to drop /new.
+ */
+export function replaceRoute(to: string): void {
+  window.history.replaceState(null, "", to);
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+let pendingInvite: string | null = null;
+
+/** Quick start hands its invite link to the home screen, which shows it once. */
+export function setPendingInvite(link: string): void {
+  pendingInvite = link;
+}
+
+export function takePendingInvite(): string | null {
+  const link = pendingInvite;
+  pendingInvite = null;
+  return link;
 }
 
 export function useRoute(): Route {

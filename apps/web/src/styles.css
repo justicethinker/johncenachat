@@ -593,6 +593,38 @@ input,
   cursor: pointer;
 }
 
+.size-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 32px;
+  max-width: 480px;
+}
+
+.size-form .size-picker {
+  margin: 0;
+}
+
+.size-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.size-input {
+  max-width: 160px;
+}
+
+.size-error {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.82rem;
+}
+
 .size-option-on {
   background: var(--accent);
   border-color: var(--accent);

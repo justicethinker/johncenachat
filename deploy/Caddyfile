@@ -29,9 +29,16 @@
 	# The HTML is the same generic shell for every room and must never be
 	# cached: a refresh has to come back to the exact same bytes.
 	@html {
-		path *.html / /r/*
+		path *.html / /r/* /new /new/*
 	}
 	header @html Cache-Control "no-store"
+
+	# Quick-start pages (/new, /new/:count) are only a way in, never something a
+	# search engine should index or keep as a result.
+	@quickstart {
+		path /new /new/*
+	}
+	header @quickstart X-Robots-Tag "noindex, nofollow"
 
 	# Relay the WebSocket and nothing else. Client addresses are not needed
 	# downstream, so they are not forwarded; the relay rate-limits on the

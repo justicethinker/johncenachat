@@ -47,6 +47,8 @@ export const MAX_DEAD_ROOMS = 20_000;
 // --- Group chat (spec addendum) ---
 /** Maximum members in a group room. The creator picks the cap, 2..MAX_PEERS. */
 export const MAX_PEERS = 8;
+/** Hard ceiling: MAX_PEERS may never be raised above this value. */
+export const MAX_PEERS_CEILING = 50;
 /** @deprecated Use MAX_PEERS. Retained for the in-progress UI migration. */
 export const MAX_CHAT_OCCUPANCY = MAX_PEERS;
 
