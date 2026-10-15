@@ -28,6 +28,8 @@ export interface JoinFrame {
   peerId: string;
   /** Group size cap, honoured only for the first joiner (the creator). */
   cap?: number;
+  /** Whether messages vanish after their sender leaves; stored from the creator only. */
+  vanish?: boolean;
 }
 
 export interface MsgFrame {
@@ -61,6 +63,8 @@ export interface JoinedFrame {
   cap: number;
   locked: boolean;
   isCreator: boolean;
+  /** Creator-selected room metadata; the relay does not enforce it. */
+  vanish: boolean;
 }
 
 export interface PeerFrame {
@@ -159,19 +163,24 @@ export function parseClientFrame(raw: string): ClientFrame | null {
         return null;
       }
       const cap = value.cap;
+      const vanish = value.vanish;
       // Preserve numeric cap input for RoomManager: a creator's invalid value
       // gets `bad_cap`, while later joiners' values are ignored.
       if (cap !== undefined && typeof cap !== "number") {
         return null;
       }
-      if (!hasOnlyKeys(value, ["type", "auth", "peerId", "cap"])) {
+      if (vanish !== undefined && typeof vanish !== "boolean") {
+        return null;
+      }
+      if (!hasOnlyKeys(value, ["type", "auth", "peerId", "cap", "vanish"])) {
         return null;
       }
       return {
         type: "join",
         auth: value.auth,
         peerId: value.peerId,
-        cap: cap === undefined ? undefined : (cap as number),
+        ...(cap === undefined ? {} : { cap: cap as number }),
+        ...(vanish === undefined ? {} : { vanish: vanish as boolean }),
       };
     }
     case "msg":
@@ -228,11 +237,14 @@ export function parseServerFrame(raw: string): ServerFrame | null {
         value.cap < 2 ||
         value.cap > MAX_PEERS ||
         typeof value.locked !== "boolean" ||
-        typeof value.isCreator !== "boolean"
+        typeof value.isCreator !== "boolean" ||
+        typeof value.vanish !== "boolean"
       ) {
         return null;
       }
-      if (!hasOnlyKeys(value, ["type", "label", "members", "cap", "locked", "isCreator"])) {
+      if (
+        !hasOnlyKeys(value, ["type", "label", "members", "cap", "locked", "isCreator", "vanish"])
+      ) {
         return null;
       }
       return {
@@ -242,6 +254,7 @@ export function parseServerFrame(raw: string): ServerFrame | null {
         cap: value.cap as number,
         locked: value.locked as boolean,
         isCreator: value.isCreator as boolean,
+        vanish: value.vanish as boolean,
       };
     }
     case "peer": {

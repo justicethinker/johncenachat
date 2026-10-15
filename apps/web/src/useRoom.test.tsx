@@ -101,6 +101,7 @@ async function joinFlow(roomId: string, secret: string): Promise<MockWebSocket> 
       cap: 8,
       locked: false,
       isCreator: true,
+      vanish: true,
     });
   });
 
@@ -171,6 +172,7 @@ describe("useRoom connection state machine", () => {
         cap: 8,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
     await until(() => screen.queryByTestId("waiting") !== null);
@@ -240,6 +242,7 @@ describe("useRoom connection state machine", () => {
         cap: 8,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
 
@@ -271,6 +274,7 @@ describe("useRoom connection state machine", () => {
         cap: 8,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
     expect(harnessApi!.status).toBe("active");
@@ -297,6 +301,7 @@ describe("useRoom connection state machine", () => {
         cap: 8,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
 
@@ -418,6 +423,7 @@ describe("useRoom connection state machine", () => {
         cap: 2,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
     await until(() => screen.queryByTestId("message-input") !== null);
@@ -463,6 +469,7 @@ describe("useRoom connection state machine", () => {
         cap: 2,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
     await until(() => screen.queryByTestId("message-input") !== null);
@@ -486,6 +493,28 @@ describe("useRoom connection state machine", () => {
     });
     expect(screen.getByTestId("ended").textContent).toBe("You ended this chat.");
     expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it("links back to the landing page from the ended screen", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => {
+      socket.open();
+    });
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({ type: "closed", reason: "expired" });
+      socket.drop();
+    });
+    await until(() => screen.queryByTestId("ended") !== null);
+
+    // The title is a link home, alongside the primary button.
+    fireEvent.click(screen.getByRole("link", { name: "Aside home" }));
+    expect(window.location.pathname).toBe("/");
   });
 
   it("shows the room's close reason when the link's room is already gone", async () => {
@@ -534,6 +563,8 @@ describe("useRoom connection state machine", () => {
     expect(window.location.hash).toBe("");
 
     const tooBig = generateRoomId();
+    cleanup();
+    cleanup();
     window.history.pushState(null, "", `/r/${tooBig}?cap=9#${secret}`);
     render(<Harness roomId={tooBig} />);
     await until(() => MockWebSocket.instances.length === 2);
@@ -543,6 +574,150 @@ describe("useRoom connection state machine", () => {
     });
     await until(() => second.sent.length === 1);
     expect(JSON.parse(second.sent[0]!)).not.toHaveProperty("cap");
+  });
+
+  it("sends the room vanish choice with the creator join and round-trips it", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}?vanish=0#${secret}`);
+    render(<Harness roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => socket.open());
+    await until(() => socket.sent.length === 1);
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: "join", vanish: false });
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 4,
+        locked: false,
+        isCreator: true,
+        vanish: false,
+      });
+    });
+    await until(() => harnessApi!.status === "waiting");
+    expect(harnessApi!.vanish).toBe(false);
+  });
+
+  it("removes only a departed sender's messages; away and back preserve them", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const socket = await joinFlow(roomId, secret);
+    const { encKey } = await deriveKeys(secret);
+    act(() => {
+      socket.message({ type: "peer", state: "joined", label: "1111", count: 2 });
+      socket.message({ type: "peer", state: "joined", label: "2222", count: 3 });
+    });
+    await until(() => harnessApi!.members.length === 2);
+
+    async function deliver(from: string, text: string): Promise<void> {
+      const c = await encryptMessage({ id: generateMessageId(), text }, encKey, roomId);
+      act(() => socket.message({ type: "msg", from, c }));
+      await until(() => harnessApi!.messages.some((message) => message.text === text));
+    }
+
+    await deliver("1111", "vanishing one");
+    await deliver("2222", "keep this");
+    await deliver("1111", "vanishing two");
+
+    act(() => socket.message({ type: "peer", state: "away", label: "1111", count: 2 }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(harnessApi!.messages).toHaveLength(3);
+
+    act(() => socket.message({ type: "peer", state: "back", label: "1111", count: 3 }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(harnessApi!.messages).toHaveLength(3);
+
+    // This is the same `left` frame the relay sends when reconnect grace expires.
+    act(() => socket.message({ type: "peer", state: "left", label: "1111", count: 2 }));
+    await until(() => harnessApi!.messages.length === 1);
+    expect(harnessApi!.messages.map((message) => message.text)).toEqual(["keep this"]);
+    expect(harnessApi!.messages[0]!.from).toBe("2222");
+  });
+
+  it("clears a departed sender's text so a reply falls back to the earlier-message chip", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    render(<Room roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => socket.open());
+    await until(() => socket.sent.length === 1);
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: ["1111", "2222"],
+        cap: 4,
+        locked: false,
+        isCreator: true,
+        vanish: true,
+      });
+    });
+    await until(() => screen.queryByTestId("message-input") !== null);
+    const { encKey } = await deriveKeys(secret);
+    const originalId = generateMessageId();
+    const original = await encryptMessage(
+      { id: originalId, text: "quoted secret" },
+      encKey,
+      roomId,
+    );
+    const reply = await encryptMessage(
+      { id: generateMessageId(), text: "reply remains", re: originalId },
+      encKey,
+      roomId,
+    );
+    act(() => socket.message({ type: "msg", from: "1111", c: original }));
+    await until(() => screen.queryByText("quoted secret") !== null);
+    act(() => socket.message({ type: "msg", from: "2222", c: reply }));
+    await until(
+      () => screen.getByTestId("messages").textContent?.includes("reply remains") === true,
+    );
+    expect(screen.getByTestId("reply-quote").textContent).toBe("quoted secret");
+
+    act(() => socket.message({ type: "peer", state: "left", label: "1111", count: 2 }));
+    await until(() => screen.queryByText("quoted secret") === null);
+    expect(screen.getByText("reply remains")).toBeTruthy();
+    expect(screen.getByTestId("reply-generic").textContent).toBe("replying to an earlier message");
+  });
+
+  it("does not remove messages after left when vanish is disabled", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    window.history.pushState(null, "", `/r/${roomId}?vanish=0#${secret}`);
+    render(<Harness roomId={roomId} />);
+    await until(() => MockWebSocket.instances.length === 1);
+    const socket = MockWebSocket.latest();
+    act(() => socket.open());
+    await until(() => socket.sent.length === 1);
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: "join", vanish: false });
+    act(() => {
+      socket.message({
+        type: "joined",
+        label: "4821",
+        members: [],
+        cap: 8,
+        locked: false,
+        isCreator: true,
+        vanish: false,
+      });
+      socket.message({ type: "peer", state: "joined", label: "1111", count: 2 });
+    });
+    await until(() => harnessApi!.vanish === false && harnessApi!.status === "active");
+    const { encKey } = await deriveKeys(secret);
+    const c = await encryptMessage(
+      { id: generateMessageId(), text: "keep on screen" },
+      encKey,
+      roomId,
+    );
+    act(() => socket.message({ type: "msg", from: "1111", c }));
+    await until(() => harnessApi!.messages.length === 1);
+    act(() => socket.message({ type: "peer", state: "left", label: "1111", count: 1 }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(harnessApi!.messages.map((message) => message.text)).toEqual(["keep on screen"]);
   });
 
   it("keeps the server-stamped sender label on each received message", async () => {
@@ -601,6 +776,7 @@ describe("useRoom connection state machine", () => {
         cap: 3,
         locked: false,
         isCreator: false,
+        vanish: true,
       });
     });
     await until(() => screen.queryByTestId("message-input") !== null);
@@ -629,6 +805,7 @@ describe("useRoom connection state machine", () => {
         cap: 8,
         locked: false,
         isCreator: true,
+        vanish: true,
       });
     });
     await until(() => screen.queryByTestId("lock-room") !== null);

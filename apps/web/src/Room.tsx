@@ -50,7 +50,19 @@ export function Room({ roomId }: { roomId: string }) {
     return (
       <main className="page">
         <div className="home">
-          <h1 className="title">Aside</h1>
+          <h1 className="title">
+            <a
+              className="title-link"
+              href="/"
+              aria-label="Aside home"
+              onClick={(event) => {
+                event.preventDefault();
+                navigate("/");
+              }}
+            >
+              Aside
+            </a>
+          </h1>
           <p className="tagline" data-testid="incomplete">
             This link is incomplete
           </p>
@@ -64,7 +76,19 @@ export function Room({ roomId }: { roomId: string }) {
     return (
       <main className="page">
         <div className="home">
-          <h1 className="title">Aside</h1>
+          <h1 className="title">
+            <a
+              className="title-link"
+              href="/"
+              aria-label="Aside home"
+              onClick={(event) => {
+                event.preventDefault();
+                navigate("/");
+              }}
+            >
+              Aside
+            </a>
+          </h1>
           <p className="tagline" data-testid="ended">
             {endMessage(room.endReason)}
           </p>
@@ -80,6 +104,7 @@ export function Room({ roomId }: { roomId: string }) {
 
   // Our own label counts as present once we have joined.
   const presentCount = 1 + room.members.filter((member) => member.present).length;
+  const showVanishNotice = room.vanish && room.cap > 2;
 
   return (
     <main className="page page-chat">
@@ -120,6 +145,11 @@ export function Room({ roomId }: { roomId: string }) {
             </button>
           </span>
         </header>
+        {showVanishNotice && (
+          <p className="vanish-notice" data-testid="vanish-notice">
+            Messages vanish when their sender leaves.
+          </p>
+        )}
 
         {room.label && (
           <div className="members" data-testid="members">

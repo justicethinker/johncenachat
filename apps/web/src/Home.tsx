@@ -8,6 +8,7 @@ const SIZE_OPTIONS = Array.from({ length: MAX_PEERS - 1 }, (_, index) => index +
 export function Home() {
   const [link, setLink] = useState<string | null>(null);
   const [size, setSize] = useState<number>(MAX_PEERS);
+  const [vanish, setVanish] = useState(true);
   const [copied, setCopied] = useState(false);
   const [copyHelp, setCopyHelp] = useState("");
   const linkRef = useRef<HTMLDivElement | null>(null);
@@ -17,8 +18,10 @@ export function Home() {
   function createChat(): void {
     const roomId = generateRoomId();
     const secret = generateSecret();
-    // The group size rides in the query so the fragment stays the secret alone.
-    setLink(`${window.location.origin}/r/${roomId}?cap=${size}#${secret}`);
+    // Creation settings ride in the query; the fragment stays the secret alone.
+    const settings = new URLSearchParams({ cap: String(size) });
+    if (!vanish) settings.set("vanish", "0");
+    setLink(`${window.location.origin}/r/${roomId}?${settings.toString()}#${secret}`);
     setCopied(false);
     setCopyHelp("");
   }
@@ -102,6 +105,16 @@ export function Home() {
                     ))}
                   </div>
                 </fieldset>
+                {size > 2 && (
+                  <label className="vanish-choice">
+                    <input
+                      type="checkbox"
+                      checked={vanish}
+                      onChange={(event) => setVanish(event.target.checked)}
+                    />
+                    <span>Messages vanish when their sender leaves</span>
+                  </label>
+                )}
                 <button type="button" className="btn btn-primary" onClick={createChat}>
                   Create chat
                 </button>

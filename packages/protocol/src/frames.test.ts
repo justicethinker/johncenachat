@@ -21,6 +21,23 @@ describe("parseClientFrame", () => {
     });
   });
 
+  it("validates optional vanish as a boolean on join", () => {
+    const peerId = generatePeerId();
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, vanish: true }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      vanish: true,
+    });
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, vanish: false }))).toEqual({
+      type: "join",
+      auth: AUTH,
+      peerId,
+      vanish: false,
+    });
+    expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, vanish: "yes" }))).toBeNull();
+  });
+
   it("accepts a join with a valid cap", () => {
     const peerId = generatePeerId();
     expect(parseClientFrame(json({ type: "join", auth: AUTH, peerId, cap: 4 }))).toEqual({
@@ -154,7 +171,7 @@ describe("parseClientFrame", () => {
 });
 
 describe("parseServerFrame", () => {
-  it("accepts joined with required group state", () => {
+  it("accepts joined with required group state and vanish setting", () => {
     expect(
       parseServerFrame(
         json({
@@ -164,6 +181,7 @@ describe("parseServerFrame", () => {
           cap: 8,
           locked: false,
           isCreator: true,
+          vanish: true,
         }),
       ),
     ).toEqual({
@@ -173,10 +191,11 @@ describe("parseServerFrame", () => {
       cap: 8,
       locked: false,
       isCreator: true,
+      vanish: true,
     });
   });
 
-  it("accepts joined with members, cap, locked and isCreator", () => {
+  it("accepts joined with members and vanish disabled", () => {
     expect(
       parseServerFrame(
         json({
@@ -186,6 +205,7 @@ describe("parseServerFrame", () => {
           cap: 4,
           locked: true,
           isCreator: true,
+          vanish: false,
         }),
       ),
     ).toEqual({
@@ -195,11 +215,19 @@ describe("parseServerFrame", () => {
       cap: 4,
       locked: true,
       isCreator: true,
+      vanish: false,
     });
   });
 
   it("rejects joined with a cap outside 2..MAX_PEERS", () => {
-    const frame = { type: "joined", label: "4821", members: [], locked: false, isCreator: false };
+    const frame = {
+      type: "joined",
+      label: "4821",
+      members: [],
+      locked: false,
+      isCreator: false,
+      vanish: false,
+    };
     expect(parseServerFrame(json({ ...frame, cap: 1 }))).toBeNull();
     expect(parseServerFrame(json({ ...frame, cap: MAX_PEERS + 1 }))).toBeNull();
   });
@@ -278,6 +306,7 @@ describe("parseServerFrame", () => {
       cap: 2,
       locked: false,
       isCreator: false,
+      vanish: false,
     };
     expect(parseServerFrame(json({ ...validJoined, label: "482" }))).toBeNull();
     expect(parseServerFrame(json({ ...validJoined, label: "48a1" }))).toBeNull();
@@ -292,6 +321,19 @@ describe("parseServerFrame", () => {
     expect(parseServerFrame(json({ type: "ack", n: 1, ts: 99 }))).toBeNull();
     expect(parseServerFrame("{nope")).toBeNull();
     expect(parseServerFrame(json({ type: "unknown" }))).toBeNull();
+  });
+
+  it("rejects joined with a non-boolean vanish flag", () => {
+    const joined = {
+      type: "joined",
+      label: "4821",
+      members: [],
+      cap: 2,
+      locked: false,
+      isCreator: false,
+      vanish: "yes",
+    };
+    expect(parseServerFrame(json(joined))).toBeNull();
   });
 
   it("rejects peer with count above MAX_PEERS", () => {
@@ -312,6 +354,7 @@ describe("parseServerFrame", () => {
           cap: 2,
           locked: false,
           isCreator: false,
+          vanish: false,
         }),
       ),
     ).toBeNull();
@@ -324,6 +367,7 @@ describe("parseServerFrame", () => {
           cap: 2,
           locked: false,
           isCreator: false,
+          vanish: false,
         }),
       ),
     ).toBeNull();
@@ -339,17 +383,34 @@ describe("parseServerFrame", () => {
           cap: 2,
           locked: false,
           isCreator: false,
+          vanish: false,
         }),
       ),
     ).not.toBeNull();
     expect(
       parseServerFrame(
-        json({ type: "joined", label: "4821", members: [], cap: 2, locked: 1, isCreator: false }),
+        json({
+          type: "joined",
+          label: "4821",
+          members: [],
+          cap: 2,
+          locked: 1,
+          isCreator: false,
+          vanish: false,
+        }),
       ),
     ).toBeNull();
     expect(
       parseServerFrame(
-        json({ type: "joined", label: "4821", members: [], cap: 2, locked: true, isCreator: 1 }),
+        json({
+          type: "joined",
+          label: "4821",
+          members: [],
+          cap: 2,
+          locked: true,
+          isCreator: 1,
+          vanish: false,
+        }),
       ),
     ).toBeNull();
   });

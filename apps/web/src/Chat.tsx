@@ -12,9 +12,9 @@ const LONG_PRESS_MS = 500;
 export const MESSAGE_VISIBLE_MS = 0;
 
 /**
- * One-sided chat UI (spec section 8): the list shows only received
- * messages, all identical in style — no names, no timestamps, no own
- * bubbles. The input clears immediately on send; after an ack a small
+ * One-sided group chat UI: the list shows only received messages, grouped
+ * by sender label, without timestamps or own bubbles. The input clears
+ * immediately on send; after an ack a small
  * "delivered" tick appears and fades after ~1.2s.
  *
  * Privacy: when the tab loses focus or is hidden the list is blurred
@@ -48,7 +48,9 @@ export function Chat({ room }: { room: RoomApi }) {
   const [draft, setDraft] = useState("");
   const [tickVisible, setTickVisible] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [replyTo, setReplyTo] = useState<ReceivedMessage | null>(null);
+  const [replyToId, setReplyToId] = useState<string | null>(null);
+  const replyTo =
+    replyToId === null ? null : room.messages.find((message) => message.id === replyToId);
   const [obscured, setObscured] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -134,18 +136,18 @@ export function Chat({ room }: { room: RoomApi }) {
   function chooseReply(message: ReceivedMessage, event: MouseEvent): void {
     event.stopPropagation();
     cancelLongPress();
-    setReplyTo(message);
+    setReplyToId(message.id);
     setSelectedId(null);
   }
 
   function send(): void {
     const text = draft;
     if (text.length === 0) return;
-    const re = replyTo?.id;
+    const re = replyToId ?? undefined;
     const accepted = re !== undefined ? room.sendMessage(text, re) : room.sendMessage(text);
     if (accepted) {
       setDraft(""); // clears immediately on send
-      setReplyTo(null);
+      setReplyToId(null);
     }
   }
 
@@ -193,14 +195,16 @@ export function Chat({ room }: { room: RoomApi }) {
 
       {room.status === "active" && (
         <div className="composer-wrap">
-          {replyTo !== null && (
+          {replyToId !== null && (
             <div className="reply-chip" data-testid="reply-chip">
-              <span className="reply-chip-text">{replyTo.text}</span>
+              <span className="reply-chip-text">
+                {replyTo?.text ?? "replying to an earlier message"}
+              </span>
               <button
                 type="button"
                 className="reply-cancel"
                 aria-label="Cancel reply"
-                onClick={() => setReplyTo(null)}
+                onClick={() => setReplyToId(null)}
               >
                 ×
               </button>
@@ -306,7 +310,7 @@ function MessageItem({
  * A received message that replies to something:
  *  - a message this screen sent -> generic chip, never quoted text
  *  - a message this screen received -> the quoted text
- *  - unknown id -> generic chip (never quote unattributable text)
+ *  - vanished or unknown id -> generic chip, without retaining quoted text
  */
 function ReplyIndicator({ room, re }: { room: RoomApi; re: string }) {
   if (!room.sentIds.has(re)) {
@@ -321,7 +325,9 @@ function ReplyIndicator({ room, re }: { room: RoomApi; re: string }) {
   }
   return (
     <div className="reply-generic" data-testid="reply-generic">
-      <span className="reply-generic-text">replying to something you said</span>
+      <span className="reply-generic-text">
+        {room.sentIds.has(re) ? "replying to something you said" : "replying to an earlier message"}
+      </span>
     </div>
   );
 }

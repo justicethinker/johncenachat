@@ -34,6 +34,62 @@ async function myLabel(page: Page): Promise<string> {
   return text.replace("You are ", "");
 }
 
+test("vanish-on-leave removes only the departed sender's messages after grace", async ({
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const contextHost = await browser.newContext();
+  const contextA = await browser.newContext();
+  const contextB = await browser.newContext();
+  const host = await contextHost.newPage();
+
+  try {
+    // Simulate an abrupt drop of A: swallow the graceful `leave` the app sends
+    // on pagehide, so the relay sees only a socket close and applies the
+    // reconnect grace before broadcasting `left`.
+    await contextA.addInitScript(() => {
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (data === '{"type":"leave"}') return;
+        return send.call(this, data);
+      };
+    });
+    const link = await createGroupChat(host, 8);
+    const a = await contextA.newPage();
+    await a.goto(link);
+    await waitActive(a);
+    const labelA = await myLabel(a);
+    const b = await contextB.newPage();
+    await b.goto(link);
+    await waitActive(b);
+    await waitActive(host);
+
+    await expect(host.getByTestId("vanish-notice")).toHaveText(
+      "Messages vanish when their sender leaves.",
+    );
+
+    await send(a, "vanish-from-a");
+    await send(b, "keep-from-b");
+    await expect(host.getByText("vanish-from-a")).toBeVisible();
+    await expect(host.getByText("keep-from-b")).toBeVisible();
+
+    // Close A's tab without a graceful leave. The relay should mark A away
+    // (message remains) and remove it only after the reconnect grace expires
+    // and the relay broadcasts `left`.
+    await a.close();
+    const memberA = host.locator('[data-testid="member"]').filter({ hasText: labelA });
+    await expect(memberA).toHaveClass(/member-off/);
+    await expect(host.getByText("vanish-from-a")).toBeVisible();
+    await expect(host.getByText("vanish-from-a")).toHaveCount(0, { timeout: 45_000 });
+    await expect(host.getByText("keep-from-b")).toBeVisible();
+    await expect(host.getByTestId("members")).toContainText("2 of 8 here");
+  } finally {
+    await contextHost.close();
+    await contextA.close();
+    await contextB.close();
+  }
+});
+
 test("a group: labels group messages, only the host can lock, and the host leaving closes it", async ({
   browser,
 }) => {

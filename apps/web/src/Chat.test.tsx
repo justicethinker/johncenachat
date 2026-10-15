@@ -13,6 +13,7 @@ function makeRoom(overrides: Partial<RoomApi> = {}): RoomApi {
     cap: 2,
     isCreator: false,
     locked: false,
+    vanish: true,
     endReason: null,
     lastError: null,
     messages: [],
@@ -69,6 +70,17 @@ describe("reply", () => {
     expect(room.sendMessage).toHaveBeenCalledWith("the answer", "r1");
     expect((screen.getByTestId("message-input") as HTMLInputElement).value).toBe("");
     expect(screen.queryByTestId("reply-chip")).toBeNull();
+  });
+
+  it("when the quoted message vanishes, the composer reply chip drops its quote", () => {
+    const message = { id: "r1", from: "0377", text: "the question" };
+    const { rerender } = render(<Chat room={makeRoom({ messages: [message] })} />);
+    fireEvent.click(screen.getByText("the question"));
+    fireEvent.click(screen.getByTestId("reply-option"));
+    expect(screen.getByTestId("reply-chip").textContent).toBe("the question×");
+
+    rerender(<Chat room={makeRoom({ messages: [] })} />);
+    expect(screen.getByTestId("reply-chip").textContent).toBe("replying to an earlier message×");
   });
 
   it("the cancel button clears the reply before sending", () => {
@@ -142,6 +154,16 @@ describe("incoming reply rendering", () => {
     expect(screen.getByText("here is my answer")).toBeTruthy();
     // Shown twice: as the original message and as the quoted text.
     expect(screen.getAllByText("original question")).toHaveLength(2);
+  });
+
+  it("a reply to a removed message uses the earlier-message fallback without quoted text", () => {
+    const room = makeRoom({
+      messages: [{ id: "m1", from: "2222", text: "the removed message", re: "gone-id" }],
+    });
+    render(<Chat room={room} />);
+    expect(screen.getByTestId("reply-generic").textContent).toBe("replying to an earlier message");
+    expect(screen.queryByTestId("reply-quote")).toBeNull();
+    expect(screen.getAllByText("the removed message")).toHaveLength(1);
   });
 
   it("re pointing at an unknown id never quotes text", () => {

@@ -48,6 +48,8 @@ interface Room {
   usedLabels: Set<string>;
   creatorPeerId: string;
   cap: number;
+  /** Creator-selected display behavior; relay only stores and returns it. */
+  vanish: boolean;
   locked: boolean;
   createdAt: number;
   lastActivity: number;
@@ -118,6 +120,7 @@ export class RoomManager {
     ip: string,
     conn: Connection,
     requestedCap?: number,
+    requestedVanish?: boolean,
   ): JoinResult {
     if (!isValidRoomId(roomId)) return { ok: false, code: "bad_room" };
     if (!isValidPeerId(peerId)) return { ok: false, code: "bad_format" };
@@ -149,6 +152,7 @@ export class RoomManager {
         usedLabels: new Set(),
         creatorPeerId: peerId,
         cap: requestedCap ?? MAX_PEERS,
+        vanish: requestedVanish ?? true,
         locked: false,
         createdAt: now,
         lastActivity: now,
@@ -192,7 +196,7 @@ export class RoomManager {
       this.removePeer(room, expiredMember);
       this.afterMemberLoss(room, now, false);
       if (!this.rooms.has(roomId)) return { ok: false, closed: "peer_left" };
-      return this.join(roomId, auth, peerId, ip, conn, requestedCap);
+      return this.join(roomId, auth, peerId, ip, conn, requestedCap, requestedVanish);
     }
     let peer = room.peers.get(peerId);
     const reconnect = peer !== undefined;
@@ -226,6 +230,7 @@ export class RoomManager {
       cap: room.cap,
       locked: room.locked,
       isCreator: peer.peerId === room.creatorPeerId,
+      vanish: room.vanish,
     };
     conn.send(joined);
 

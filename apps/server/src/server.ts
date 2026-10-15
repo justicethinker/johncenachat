@@ -82,7 +82,15 @@ export function createAsideServer(options: { clock?: Clock } = {}): AsideServer 
           conn.close();
           return;
         }
-        const result = manager.join(roomId, frame.auth, frame.peerId, ip, conn, frame.cap);
+        const result = manager.join(
+          roomId,
+          frame.auth,
+          frame.peerId,
+          ip,
+          conn,
+          frame.cap,
+          frame.vanish,
+        );
         if (!result.ok) {
           if ("closed" in result) {
             // The link belongs to a room that already closed: report why, then

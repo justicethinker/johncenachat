@@ -64,6 +64,28 @@ describe("Home", () => {
     });
   });
 
+  it("defaults vanish-on-leave on, hides it for two-person rooms, and encodes an opt-out", () => {
+    render(<Home />);
+    const setting = screen.getByRole("checkbox", {
+      name: "Messages vanish when their sender leaves",
+    }) as HTMLInputElement;
+    expect(setting.checked).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    expect(
+      screen.queryByRole("checkbox", { name: "Messages vanish when their sender leaves" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "3" }));
+    const restoredSetting = screen.getByRole("checkbox", {
+      name: "Messages vanish when their sender leaves",
+    }) as HTMLInputElement;
+    fireEvent.click(restoredSetting);
+    fireEvent.click(screen.getByRole("button", { name: "Create chat" }));
+    const url = new URL(screen.getByTestId("invite-link").textContent ?? "");
+    expect(url.searchParams.get("vanish")).toBe("0");
+  });
+
   it("lets the creator pick a group size, which goes into the link", () => {
     render(<Home />);
     fireEvent.click(screen.getByRole("button", { name: "3" }));

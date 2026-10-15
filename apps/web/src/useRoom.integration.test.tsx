@@ -103,7 +103,7 @@ describe("two tabs against the real relay", () => {
     return container;
   }
 
-  async function openTwoTabs(): Promise<{
+  async function openTwoTabs(vanish = true): Promise<{
     roomId: string;
     containerA: HTMLDivElement;
     containerB: HTMLDivElement;
@@ -115,11 +115,11 @@ describe("two tabs against the real relay", () => {
     const containerA = makeContainer();
     const containerB = makeContainer();
 
-    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    window.history.pushState(null, "", `/r/${roomId}${vanish ? "" : "?vanish=0"}#${secret}`);
     const a = render(<Room roomId={roomId} />, { container: containerA });
     await within(containerA).findByTestId("waiting");
 
-    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    window.history.pushState(null, "", `/r/${roomId}${vanish ? "" : "?vanish=0"}#${secret}`);
     const b = render(<Room roomId={roomId} />, { container: containerB });
     await within(containerB).findByRole("textbox"); // active: composer visible
     await waitFor(() =>
@@ -127,6 +127,36 @@ describe("two tabs against the real relay", () => {
     );
     return { roomId, containerA, containerB, a, b };
   }
+
+  it("honors vanish=0 and does not remove a departed member's messages", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const containers = [makeContainer(), makeContainer(), makeContainer()];
+    window.history.pushState(null, "", `/r/${roomId}?vanish=0#${secret}`);
+    const host = render(<Room roomId={roomId} />, { container: containers[0] });
+    await within(containers[0]!).findByTestId("waiting");
+    window.history.pushState(null, "", `/r/${roomId}?vanish=0#${secret}`);
+    const a = render(<Room roomId={roomId} />, { container: containers[1] });
+    await within(containers[1]!).findByRole("textbox");
+    window.history.pushState(null, "", `/r/${roomId}?vanish=0#${secret}`);
+    const b = render(<Room roomId={roomId} />, { container: containers[2] });
+    await within(containers[2]!).findByRole("textbox");
+
+    fireEvent.change(within(containers[1]!).getByTestId("message-input"), {
+      target: { value: "preserved from A" },
+    });
+    fireEvent.click(within(containers[1]!).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(within(containers[0]!).getByText("preserved from A")).toBeTruthy());
+    expect(
+      TestWebSocket.instances[0]!.receivedFrames.map((frame) => JSON.parse(frame)),
+    ).toContainEqual(expect.objectContaining({ type: "joined", vanish: false }));
+    a.unmount();
+    await waitFor(() =>
+      expect(within(containers[0]!).queryByText("preserved from A")).not.toBeNull(),
+    );
+    b.unmount();
+    host.unmount();
+  });
 
   it("receives server-stamped sender labels and never sees its own relayed frame", async () => {
     const { containerA, containerB, a, b } = await openTwoTabs();
@@ -194,6 +224,41 @@ describe("two tabs against the real relay", () => {
     a.unmount();
     containerA.remove();
     containerB.remove();
+  });
+
+  it("vanishes only the departed sender's messages in a three-member room", async () => {
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    const containers = [makeContainer(), makeContainer(), makeContainer()];
+    // C creates; A and B join. A can leave without closing the room.
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    const c = render(<Room roomId={roomId} />, { container: containers[0] });
+    await within(containers[0]!).findByTestId("waiting");
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    const a = render(<Room roomId={roomId} />, { container: containers[1] });
+    await within(containers[1]!).findByRole("textbox");
+    window.history.pushState(null, "", `/r/${roomId}#${secret}`);
+    const b = render(<Room roomId={roomId} />, { container: containers[2] });
+    await within(containers[2]!).findByRole("textbox");
+
+    const sendFrom = (container: HTMLElement, text: string) => {
+      fireEvent.change(within(container).getByTestId("message-input"), { target: { value: text } });
+      fireEvent.click(within(container).getByRole("button", { name: "Send" }));
+    };
+    sendFrom(containers[1]!, "from A before leave");
+    sendFrom(containers[2]!, "from B stays");
+    await waitFor(() =>
+      expect(within(containers[0]!).getByText("from A before leave")).toBeTruthy(),
+    );
+    await waitFor(() => expect(within(containers[0]!).getByText("from B stays")).toBeTruthy());
+
+    a.unmount();
+    await waitFor(() =>
+      expect(within(containers[0]!).queryByText("from A before leave")).toBeNull(),
+    );
+    expect(within(containers[0]!).getByText("from B stays")).toBeTruthy();
+    b.unmount();
+    c.unmount();
   });
 
   it("shows only the other person's messages on each screen", async () => {

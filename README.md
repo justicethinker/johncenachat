@@ -61,7 +61,8 @@ Stated honestly, not hidden:
 
 - Screenshots and recordings cannot be blocked in a browser. The design makes them
   _low value_ (one-sided, anonymous, deniable), not impossible.
-- The other person can still copy, retype, or remember what you wrote to them.
+- The other person can still copy, retype, or remember what you wrote to them. “Messages vanish when their sender leaves” only removes messages from screens running the real client; screenshots, copies, retyped messages, and modified clients keep what they saw.
+- In vanish-on-leave group rooms, group history gets thinner as people leave, and replies to vanished messages lose their context.
 - The shared link is the only secret. Anyone who gets the full link before the
   second person joins can take that slot.
 - The WhatsApp message containing the link is itself a record that you invited

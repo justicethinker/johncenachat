@@ -60,7 +60,7 @@ function setup(maxDeadRooms = 20_000) {
   const auth = makeAuth();
   const creatorId = generatePeerId();
   const creator = new FakeConn();
-  expect(manager.join(roomId, auth, creatorId, IP, creator, 3).ok).toBe(true);
+  expect(manager.join(roomId, auth, creatorId, IP, creator, 3, true).ok).toBe(true);
   return { clock, manager, roomId, auth, creatorId, creator };
 }
 
@@ -76,6 +76,27 @@ function send(s: ReturnType<typeof setup>, peerId: string, conn: FakeConn, n = 1
 }
 
 describe("RoomManager groups", () => {
+  it("stores and returns creator vanish metadata without changing relay behavior", () => {
+    const clock = new FakeClock();
+    const manager = new RoomManager({ clock });
+    const roomId = generateRoomId();
+    const auth = makeAuth(23);
+    const creatorId = generatePeerId();
+    const creator = new FakeConn();
+    expect(manager.join(roomId, auth, creatorId, IP, creator, 4, false).ok).toBe(true);
+    const guest = new FakeConn();
+    expect(manager.join(roomId, auth, generatePeerId(), IP, guest).ok).toBe(true);
+    expect(creator.ofType("joined")[0]!.vanish).toBe(false);
+    expect(guest.ofType("joined")[0]!.vanish).toBe(false);
+
+    creator.reset();
+    guest.reset();
+    manager.msg(roomId, creatorId, creator, { type: "msg", n: 5, c: CIPHER });
+    expect(guest.ofType("msg")).toHaveLength(1);
+    expect(creator.ofType("msg")).toHaveLength(0);
+    expect(guest.ofType("peer")).toHaveLength(0);
+  });
+
   it("honors cap 3 and ignores cap values from later joiners", () => {
     const s = setup();
     const b = join(s, 1);
@@ -87,6 +108,8 @@ describe("RoomManager groups", () => {
     expect(d.conn.frames).toHaveLength(0);
     expect(s.creator.ofType("joined")[0]!.cap).toBe(3);
     expect(s.creator.ofType("joined")[0]!.members).toEqual([]);
+    expect(s.creator.ofType("joined")[0]!.vanish).toBe(true);
+    expect(b.conn.ofType("joined")[0]!.vanish).toBe(true);
   });
 
   it("rejects invalid cap values before creating a room", () => {

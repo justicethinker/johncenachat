@@ -44,6 +44,7 @@ export interface RoomState {
   cap: number;
   isCreator: boolean;
   locked: boolean;
+  vanish: boolean;
   endReason: EndReason | null;
   lastError: ErrorCode | null;
   messages: ReceivedMessage[];
@@ -62,6 +63,19 @@ export interface RoomApi extends RoomState {
   sentIds: ReadonlySet<string>;
 }
 
+/** Shared ID-based deletion path for removal actions such as vanish-on-leave. */
+export function removeMessagesByIds(
+  messages: ReceivedMessage[],
+  ids: ReadonlySet<string>,
+): ReceivedMessage[] {
+  if (ids.size === 0) return messages;
+  return messages.filter((message) => !ids.has(message.id));
+}
+
+function parseVanish(search: string): boolean {
+  return new URLSearchParams(search).get("vanish") !== "0";
+}
+
 const INITIAL_STATE: RoomState = {
   status: "connecting",
   label: null,
@@ -71,6 +85,7 @@ const INITIAL_STATE: RoomState = {
   cap: 8,
   isCreator: false,
   locked: false,
+  vanish: true,
   endReason: null,
   lastError: null,
   messages: [],
@@ -97,7 +112,12 @@ const RECONNECT_DEADLINE_MS = RECONNECT_GRACE_MS - 2_000;
 export function useRoom(roomId: string): RoomApi {
   const [state, setState] = useState<RoomState>(INITIAL_STATE);
 
-  const secretRef = useRef<{ roomId: string; secret: string; cap: number | null } | null>(null);
+  const secretRef = useRef<{
+    roomId: string;
+    secret: string;
+    cap: number | null;
+    vanish: boolean;
+  } | null>(null);
   const keysRef = useRef<{ encKey: CryptoKey; authToken: string } | null>(null);
   const peerIdRef = useRef<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -115,6 +135,8 @@ export function useRoom(roomId: string): RoomApi {
     let reconnectDeadline: number | null = null;
     let intentionalClose = false;
     const seenIds = new Set<string>();
+    const vanishedLabels = new Set<string>();
+    const vanishRef = { current: true };
 
     // Capture the secret exactly once per mounted room, then strip it from
     // the URL bar immediately: after this, it lives only in memory.
@@ -124,6 +146,7 @@ export function useRoom(roomId: string): RoomApi {
         roomId,
         secret: hash.startsWith("#") ? hash.slice(1) : "",
         cap: parseCap(window.location.search),
+        vanish: parseVanish(window.location.search),
       };
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
@@ -178,7 +201,8 @@ export function useRoom(roomId: string): RoomApi {
         // `cap` is only honoured for the first joiner (the creator); the server
         // ignores it for everyone else, so every link can carry it safely.
         const cap = secretRef.current?.cap ?? undefined;
-        socket.send(JSON.stringify({ type: "join", auth: keys.authToken, peerId, cap }));
+        const vanish = secretRef.current?.vanish ?? true;
+        socket.send(JSON.stringify({ type: "join", auth: keys.authToken, peerId, cap, vanish }));
       };
       socket.onmessage = (event) => {
         void handleFrame(String(event.data));
@@ -203,6 +227,7 @@ export function useRoom(roomId: string): RoomApi {
           reconnectDeadline = null;
           const members = frame.members.map((label) => ({ label, present: true }));
           const present = members.length > 0;
+          vanishRef.current = frame.vanish;
           setState((s) => ({
             ...s,
             status: present ? "active" : "waiting",
@@ -213,11 +238,15 @@ export function useRoom(roomId: string): RoomApi {
             cap: frame.cap,
             isCreator: frame.isCreator,
             locked: frame.locked,
+            vanish: frame.vanish,
             endReason: null,
           }));
           return;
         }
         case "peer": {
+          if (frame.state === "left" && vanishRef.current) {
+            vanishedLabels.add(frame.label);
+          }
           setState((s) => {
             if (s.status === "ended") return s;
             const existing = s.members.find((member) => member.label === frame.label);
@@ -233,12 +262,24 @@ export function useRoom(roomId: string): RoomApi {
                   : [...s.members, { label: frame.label, present: frame.state !== "away" }];
             const otherMembers = members.filter((member) => member.label !== s.label);
             const peerPresent = otherMembers.some((member) => member.present);
+            const vanishedIds =
+              s.vanish && frame.state === "left"
+                ? new Set(
+                    s.messages
+                      .filter((message) => message.from === frame.label)
+                      .map((message) => message.id),
+                  )
+                : new Set<string>();
+            if (vanishedIds.size > 0) {
+              for (const id of vanishedIds) seenIds.add(id);
+            }
             return {
               ...s,
               status: peerPresent ? "active" : "waiting",
               peerPresent,
               peerLabel: otherMembers[0]?.label ?? null,
               members: otherMembers,
+              messages: removeMessagesByIds(s.messages, vanishedIds),
             };
           });
           return;
@@ -252,6 +293,7 @@ export function useRoom(roomId: string): RoomApi {
           if (!keys) return;
           try {
             const payload = await decryptMessage(frame.c, keys.encKey, roomId);
+            if (vanishedLabels.has(frame.from)) return;
             if (seenIds.has(payload.id)) return; // replay guard
             seenIds.add(payload.id);
             const message: ReceivedMessage =

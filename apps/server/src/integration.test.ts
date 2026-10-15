@@ -81,12 +81,22 @@ interface Member {
   label: string;
 }
 
-async function joinRoom(port: number, roomId: string, auth: string, cap?: number): Promise<Member> {
+async function joinRoom(
+  port: number,
+  roomId: string,
+  auth: string,
+  cap?: number,
+  vanish?: boolean,
+): Promise<Member> {
   const client = await Client.open(port, roomId);
   const peerId = generatePeerId();
-  client.send(
-    cap === undefined ? { type: "join", auth, peerId } : { type: "join", auth, peerId, cap },
-  );
+  client.send({
+    type: "join",
+    auth,
+    peerId,
+    ...(cap === undefined ? {} : { cap }),
+    ...(vanish === undefined ? {} : { vanish }),
+  });
   const joined = (await client.waitFor((f) => f.type === "joined")) as JoinedFrame;
   expect(joined.label).toMatch(/^[0-9]{4}$/);
   return { client, peerId, label: joined.label };
@@ -249,6 +259,83 @@ describe("relay integration", () => {
     expect(server.manager.size).toBe(0);
     b.client.close();
     c.client.close();
+  });
+
+  it("round-trips vanish from creator join to every joined frame without relay enforcement", async () => {
+    const roomId = generateRoomId();
+    const auth = makeAuth(16);
+    const a = await joinRoom(port, roomId, auth, 4, false);
+    const b = await joinRoom(port, roomId, auth);
+    const c = await joinRoom(port, roomId, auth);
+    expect(a.client.ofType("joined")[0]!.vanish).toBe(false);
+    expect(b.client.ofType("joined")[0]!.vanish).toBe(false);
+    expect(c.client.ofType("joined")[0]!.vanish).toBe(false);
+
+    const payload = cipher(37);
+    b.client.send({ type: "msg", n: 4, c: payload });
+    expect(await a.client.waitFor((frame) => frame.type === "msg")).toEqual({
+      type: "msg",
+      from: b.label,
+      c: payload,
+    });
+    expect(await c.client.waitFor((frame) => frame.type === "msg")).toEqual({
+      type: "msg",
+      from: b.label,
+      c: payload,
+    });
+    b.client.send({ type: "leave" });
+    expect(
+      await a.client.waitFor((frame) => frame.type === "peer" && frame.state === "left"),
+    ).toMatchObject({
+      type: "peer",
+      state: "left",
+      label: b.label,
+    });
+    expect(
+      await c.client.waitFor((frame) => frame.type === "peer" && frame.state === "left"),
+    ).toMatchObject({
+      type: "peer",
+      state: "left",
+      label: b.label,
+    });
+    // The relay reports the lifecycle event but does not remove or reinterpret messages.
+    expect(c.client.ofType("msg")).toHaveLength(1);
+    a.client.send({ type: "leave" });
+    c.client.close();
+    a.client.close();
+    b.client.close();
+  });
+
+  it("expires an away non-creator after reconnect grace and broadcasts left", async () => {
+    const roomId = generateRoomId();
+    const auth = makeAuth(21);
+    const host = await joinRoom(port, roomId, auth, 4, true);
+    const away = await joinRoom(port, roomId, auth);
+    const observer = await joinRoom(port, roomId, auth);
+    away.client.close();
+    await host.client.waitFor((frame) => frame.type === "peer" && frame.state === "away");
+    await observer.client.waitFor((frame) => frame.type === "peer" && frame.state === "away");
+
+    clock.advance(30_000);
+    server.manager.tick();
+    expect(
+      await host.client.waitFor((frame) => frame.type === "peer" && frame.state === "left"),
+    ).toMatchObject({
+      type: "peer",
+      state: "left",
+      label: away.label,
+    });
+    expect(
+      await observer.client.waitFor((frame) => frame.type === "peer" && frame.state === "left"),
+    ).toMatchObject({
+      type: "peer",
+      state: "left",
+      label: away.label,
+    });
+    host.client.send({ type: "leave" });
+    observer.client.close();
+    host.client.close();
+    away.client.close();
   });
 
   it("rejects an invalid creator cap with bad_cap", async () => {
