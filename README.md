@@ -35,6 +35,26 @@ file next to `docker-compose.yml`), delete the `tls internal` line from `Caddyfi
 and open ports 80/443. Caddy then provisions a real Let's Encrypt certificate
 automatically. Nothing else to configure.
 
+### Railway (one command)
+
+The project ships a Railway definition (`.railway/railway.ts`) with the same two
+services: the relay (built from `deploy/Dockerfile.server`) and the static site.
+Once the repo is on Railway, everything else is one command:
+
+```sh
+railway login
+bash deploy/railway-setup.sh
+```
+
+The script links the project, applies the definition, generates the relay's
+public domain, points the site build at it (`VITE_RELAY_WS`, baked in at build
+time), and waits for the relay health check. Open the `web` service domain and
+try `/new/4`.
+
+Two things to know: the relay keeps rooms in process memory, so it must stay at
+exactly 1 replica (already set in the definition — do not raise it), and Railway
+sees only the same network-level metadata any host sees (see above).
+
 ### Verifying that nothing is logged
 
 The relay uses `console.*` only for fatal startup errors, never for rooms,

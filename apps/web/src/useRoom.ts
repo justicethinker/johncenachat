@@ -186,7 +186,15 @@ export function useRoom(roomId: string): RoomApi {
       msgCounterRef.current = 0;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(`${protocol}//${window.location.host}/ws/${roomId}`);
+      // Split hosting (Vercel/Railway frontend, relay elsewhere): a full
+      // origin such as wss://relay.example.com. Unset means same-origin,
+      // which is what local dev, Docker and the e2e suite use.
+      const relayOrigin = import.meta.env.VITE_RELAY_WS as string | undefined;
+      const socket = new WebSocket(
+        relayOrigin
+          ? `${relayOrigin.replace(/\/$/, "")}/ws/${roomId}`
+          : `${protocol}//${window.location.host}/ws/${roomId}`,
+      );
       wsRef.current = socket;
 
       connectTimer = setTimeout(() => {

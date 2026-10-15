@@ -119,6 +119,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   window.history.pushState(null, "", "/");
 });
 
@@ -149,6 +150,14 @@ describe("useRoom connection state machine", () => {
     expect(join).not.toHaveProperty("from");
     const { authToken } = await deriveKeys(secret);
     expect(join.auth).toBe(authToken);
+  });
+
+  it("connects to VITE_RELAY_WS when set, ignoring the page origin", async () => {
+    vi.stubEnv("VITE_RELAY_WS", "wss://relay.example.com/");
+    const roomId = generateRoomId();
+    const secret = generateSecret();
+    await joinFlow(roomId, secret);
+    expect(MockWebSocket.latest().url).toBe(`wss://relay.example.com/ws/${roomId}`);
   });
 
   it("moves through waiting, active and back, then ends with a clear message", async () => {
