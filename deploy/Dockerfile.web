@@ -2,7 +2,9 @@
 # to the relay. One image so the site and the Caddyfile ship together.
 #
 # The install stage below is byte-identical to the one in Dockerfile.server,
-# so BuildKit runs it once and both images share the download.
+# so layer caching shares the download between both images. Plain RUN steps
+# only: some remote builders (Railway's included) reject BuildKit
+# --mount=type=cache flags.
 
 FROM node:22-alpine AS build
 
@@ -15,12 +17,11 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 WORKDIR /repo
 
-# Lockfile only first: `pnpm fetch` populates the content-addressable store
-# and is cached on its own, so an interrupted build resumes without
+# Lockfile only first: `pnpm fetch` populates the store in its own layer,
+# so an unchanged lockfile reuses the cached layers below without
 # re-downloading anything.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
-    pnpm fetch --store-dir /pnpm/store
+RUN pnpm fetch
 
 COPY tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/
@@ -28,8 +29,7 @@ COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY e2e/package.json e2e/
 
-RUN --mount=type=cache,id=aside-pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --store-dir /pnpm/store
+RUN pnpm install --frozen-lockfile
 
 COPY packages/protocol packages/protocol
 # apps/web's typecheck pulls in the relay sources from its integration test,
